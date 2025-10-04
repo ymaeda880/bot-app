@@ -1,0 +1,24 @@
+# app
+streamlit
+python-dotenv
+numpy
+pandas
+tiktoken
+openai>=1.40.0
+
+# （必要なら）埋め込み・モデルユーティリティ
+sentence-transformers
+
+# PDFテキスト抽出
+pdfplumber
+
+# OCR（必要な人だけ）
+pillow
+pdf2image
+pytesseract
+
+# Word 出力
+python-docx
+
+# Excel 出力
+xlsxwriter

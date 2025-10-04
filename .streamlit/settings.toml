@@ -1,0 +1,38 @@
+# settings.toml
+# プロジェクト名：bot_app
+
+# database/ はgitしない（運用用）
+# develop/ はgitする（試験用）
+
+[env]
+# 利用する環境を選択: "Develop" / "Mac" / "Server"
+location = "Mac"
+
+[mounts]
+Mac    = "/Volumes/Extreme SSD"
+Server = "/srv/ssd"
+
+# ===== 環境ごとのルート定義 =====
+
+# Develop（開発環境）: プロジェクト内を利用
+[locations.Develop]
+pdf_root    = "project:develop/pdf"
+backup_root = "project:develop/backup"
+data_root   = "project:develop/data"
+
+# Mac（Mac 運用環境）: 外付けSSDを利用
+[locations.Mac]
+pdf_root    = "mount:Mac/report/pdf"
+backup_root = "project:database/backup"
+data_root   = "project:database/data"
+
+# Server（サーバー環境）
+[locations.Server]
+pdf_root    = "mount:Server/pdf"
+backup_root = "mount:Server/backup"
+data_root   = "mount:Server/data"
+
+# ===== 共通アプリ設定 =====
+[app]
+available_presets = ["Develop", "Mac", "Server"]
+# bot_bucket        = "bot_data"
