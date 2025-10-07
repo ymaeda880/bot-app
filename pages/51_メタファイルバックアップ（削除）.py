@@ -500,6 +500,79 @@ if st.button(
 st.divider()
 
 # ============================================================
+# 🎯 year/pno で削除
+# ============================================================
+st.subheader("🎯 year / pno で削除")
+
+if rows:
+    years = sorted(set(str(r.get("year")) for r in rows if r.get("year")))
+    pnos = sorted(set(str(r.get("pno")) for r in rows if r.get("pno")))
+
+    c1, c2 = st.columns(2)
+    with c1:
+        sel_year = st.selectbox("対象 year", ["(未選択)"] + years, key="sel_year")
+    with c2:
+        sel_pno = st.selectbox("対象 pno", ["(未選択)"] + pnos, key="sel_pno")
+
+    confirm_yp = st.checkbox("削除に同意します（バックアップ推奨）", key="confirm_yearpno")
+
+    if st.button("🧹 year/pno 指定削除を実行", type="primary", disabled=not confirm_yp, key="btn_del_yearpno"):
+        try:
+            # バックアップ
+            copied, bdir = backup_all_local(base_dir, backend, shard_id)
+
+            keep_lines, keep_vec_indices = [], []
+            removed_meta, valid_idx = 0, 0
+
+            if meta_path.exists():
+                with meta_path.open("r", encoding="utf-8") as f:
+                    for raw in f:
+                        s = raw.strip()
+                        if not s:
+                            continue
+                        try:
+                            obj = json.loads(s)
+                        except Exception:
+                            keep_lines.append(raw)
+                            continue
+
+                        yr = str(obj.get("year", ""))
+                        pno = str(obj.get("pno", ""))
+                        # ★ year/pnoが一致するレコードを削除
+                        if (sel_year != "(未選択)" and yr != sel_year):
+                            keep_lines.append(json.dumps(obj, ensure_ascii=False) + "\n")
+                            keep_vec_indices.append(valid_idx)
+                        elif (sel_pno != "(未選択)" and pno != sel_pno):
+                            keep_lines.append(json.dumps(obj, ensure_ascii=False) + "\n")
+                            keep_vec_indices.append(valid_idx)
+                        else:
+                            removed_meta += 1
+                        valid_idx += 1
+
+                with meta_path.open("w", encoding="utf-8") as f:
+                    f.writelines(keep_lines)
+
+            # vectors.npy 同期
+            removed_vecs = 0
+            if vec_path.exists():
+                vecs = np.load(vec_path)
+                if vecs.ndim == 2:
+                    new_vecs = vecs[keep_vec_indices] if keep_vec_indices else np.empty((0, vecs.shape[1]))
+                    removed_vecs = vecs.shape[0] - new_vecs.shape[0]
+                    np.save(vec_path, new_vecs)
+
+            st.success(
+                f"削除完了 ✅\n"
+                f"- year={sel_year}, pno={sel_pno} に一致するメタを削除\n"
+                f"- meta.jsonl: {removed_meta} 行削除\n"
+                f"- vectors.npy: {removed_vecs} 行削除\n"
+                f"- バックアップ: {bdir}"
+            )
+        except Exception as e:
+            st.error(f"削除中にエラー: {e}")
+
+
+# ============================================================
 # 🗑️ 完全初期化（3ファイルのみ削除：meta.jsonl / vectors.npy / processed_files.json）
 # ============================================================
 st.subheader("🗑️ 完全初期化")
@@ -581,3 +654,5 @@ else:
                 st.success(msg)
             except Exception as e:
                 st.error(f"復元中にエラー: {e}")
+
+
