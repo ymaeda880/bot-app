@@ -120,12 +120,12 @@ with st.sidebar:
     sample = st.selectbox("サンプル質問を選択", sample_options, index=0)
     cols_demo = st.columns(2)
     with cols_demo[0]:
-        st.button("⬇️ この質問を入力欄へセット", use_container_width=True,
+        st.button("⬇️ この質問を入力欄へセット", width='stretch',
                   disabled=(sample in ("", "（未選択）")), on_click=lambda: _set_q(sample))
     with cols_demo[1]:
-        st.button("🎲 ランダム挿入", use_container_width=True,
+        st.button("🎲 ランダム挿入", width='stretch',
                   on_click=lambda: _set_q(str(np.random.choice(ALL_SAMPLES)) if ALL_SAMPLES else ""))
-    send_now = st.button("🚀 サンプルで即送信", use_container_width=True,
+    send_now = st.button("🚀 サンプルで即送信", width='stretch',
                          disabled=(st.session_state.q.strip() == ""))
 
 # ===== 本文 =========================================================

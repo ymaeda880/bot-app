@@ -5,11 +5,12 @@
 # develop/ はgitする（試験用）
 
 [env]
-# 利用する環境を選択: "Develop" / "Mac" / "Server"
-location = "Mac"
+# 利用する環境を選択: "Develop" / "Home" / "Server / "Prec""
+location = "Home"
 
 [mounts]
-Mac    = "/Volumes/Extreme SSD"
+Home    = "/Volumes/Extreme SSD"
+Prec    = "/Volumes/Extreme SSD"
 Server = "/srv/ssd"
 
 # ===== 環境ごとのルート定義 =====
@@ -20,10 +21,18 @@ pdf_root    = "project:develop/pdf"
 backup_root = "project:develop/backup"
 data_root   = "project:develop/data"
 
-# Mac（Mac 運用環境）: 外付けSSDを利用
-[locations.Mac]
-pdf_root    = "mount:Mac/report/pdf"
+# Home（Mac 運用環境（自宅））: 外付けSSDを利用
+[locations.Home]
+pdf_root    = "mount:Home/report/pdf"
 backup_root = "project:database/backup"
+backup_root2 = "mount:Home/backup"
+data_root   = "project:database/data"
+
+# Prec（Mac 運用環境（Prec））: 外付けSSDを利用
+[locations.Prec]
+pdf_root    = "mount:Prec/report/pdf"
+backup_root = "project:database/backup"
+backup_root2 = "mount:Prec/backup"
 data_root   = "project:database/data"
 
 # Server（サーバー環境）
@@ -34,5 +43,5 @@ data_root   = "mount:Server/data"
 
 # ===== 共通アプリ設定 =====
 [app]
-available_presets = ["Develop", "Mac", "Server"]
+available_presets = ["Develop", "Home", "Prec", "Server"]
 # bot_bucket        = "bot_data"

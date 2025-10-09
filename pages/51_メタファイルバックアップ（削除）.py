@@ -1,14 +1,15 @@
 # pages/51_メタファイルバックアップ（削除）.py
 # ------------------------------------------------------------
 # 🗑️ メタファイル削除ページ
-# - 削除 / 初期化 / バックアップ / 復元
-# - バックアップ保存先：PATHS.backup_root / <backend> / <shard_id> / <timestamp>
+# - 削除 / 初期化 / バックアップ / 復元 / 古いバックアップ整理
+# - バックアップ保存先：<選択した BACKUP_ROOT> / <backend> / <shard_id> / <timestamp>
 # - 追加機能:
 #   1) すべてのシャードを即時バックアップ
 #   2) 対象シャードのみ即時バックアップ
 #   3) 「未バックアップ日数」しきい値で一括バックアップ
 #   4) シャードごと削除（フォルダ完全削除→空フォルダ再作成）
 #   5) 完全初期化にもバックアップ＆DELETE確認
+#   6) 古いバックアップの削除（最新N件 / しきい値日数）
 # ------------------------------------------------------------
 from __future__ import annotations
 from pathlib import Path
@@ -25,25 +26,51 @@ import streamlit as st
 from config.path_config import PATHS  # ✅ vs_root / backup_root を集中管理
 from lib.vectorstore_utils import iter_jsonl  # 既存ユーティリティ
 
+# 🔁 外部ユーティリティ（lib 下へ切り出し済み）
+from lib.backup_utils import (
+    backup_all_local,
+    list_backup_dirs_local,
+    preview_backup_local,
+    restore_from_backup_local,
+    backup_age_days_local,
+    cleanup_old_backups_keep_last,
+    cleanup_old_backups_older_than_days,
+)
+from lib.processed_files_utils import remove_from_processed_files_selective
+
 # ============================================================
 # 基本パス（config に合わせる）
 # ============================================================
-VS_ROOT: Path      = PATHS.vs_root
-BACKUP_ROOT: Path  = PATHS.backup_root
+VS_ROOT: Path = PATHS.vs_root
+# デフォルトは標準バックアップ（ラジオで切替）
+BACKUP_ROOT: Path = PATHS.backup_root
 
 # ============================================================
-# バックアップ先の存在保証（最初のバックアップで失敗しないように）
+# 初期存在保証（初回でも失敗しないように）
 # ============================================================
-BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
-(VS_ROOT / "openai").mkdir(parents=True, exist_ok=True)   # なくても動きますが安全のため
-(VS_ROOT / "local").mkdir(parents=True, exist_ok=True)    # local も使うなら
+try:
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
+(VS_ROOT / "openai").mkdir(parents=True, exist_ok=True)
+(VS_ROOT / "local").mkdir(parents=True, exist_ok=True)
 
 # ============================================================
 # UI 設定
 # ============================================================
 st.set_page_config(page_title="51 メタファイル削除", page_icon="🗑️", layout="wide")
 st.title("🗑️ メタファイルバックアップ・削除（シャード単位）")
-st.caption(f"Backup base: `{BACKUP_ROOT}` / VectorStore: `{VS_ROOT}`")
+
+# 冒頭の環境サマリ（改行で見やすく）
+st.markdown(
+    f"""
+**VectorStore:** `{VS_ROOT}`  
+**標準バックアップ:** `{PATHS.backup_root}`  
+**外付けSSDバックアップ:** `{PATHS.backup_root2}`
+    """,
+    unsafe_allow_html=True,
+)
+
 st.info("このページは **削除・初期化・バックアップ/復元** に特化しています。作業前に必ずバックアップを作成してください。")
 
 # ============================================================
@@ -73,200 +100,29 @@ vec_path  = base_dir / "vectors.npy"
 pf_path   = base_dir / "processed_files.json"
 
 # ============================================================
-# バックアップ（このページで実装）
-# ============================================================
-def _timestamp() -> str:
-    return datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S")
-
-def _backup_dir_for(backend: str, shard_id: str, ts: str | None = None) -> Path:
-    if ts is None:
-        ts = _timestamp()
-    return BACKUP_ROOT / backend / shard_id / ts
-
-def backup_all_local(src_dir: Path, backend: str, shard_id: str) -> tuple[list[str], Path]:
-    """
-    src_dir（= VS_ROOT/backend/shard）から meta.jsonl / vectors.npy / processed_files.json を
-    BACKUP_ROOT/backend/shard/<timestamp>/ にコピー。存在するものだけコピー。
-    """
-    ts_dir = _backup_dir_for(backend, shard_id)
-    ts_dir.mkdir(parents=True, exist_ok=True)
-    copied: list[str] = []
-    for name in ["meta.jsonl", "vectors.npy", "processed_files.json"]:
-        src = src_dir / name
-        if src.exists():
-            shutil.copy2(src, ts_dir / name)
-            copied.append(name)
-    return copied, ts_dir
-
-def list_backup_dirs_local(backend: str, shard_id: str) -> list[Path]:
-    root = BACKUP_ROOT / backend / shard_id
-    if not root.exists():
-        return []
-    return sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name, reverse=True)
-
-def preview_backup_local(bdir: Path) -> pd.DataFrame:
-    rows = []
-    for name in ["meta.jsonl", "vectors.npy", "processed_files.json"]:
-        p = bdir / name
-        if p.exists():
-            size = p.stat().st_size
-            rows.append({"name": name, "size(bytes)": size, "path": str(p)})
-    return pd.DataFrame(rows)
-
-def restore_from_backup_local(dst_dir: Path, bdir: Path) -> tuple[list[str], list[str]]:
-    restored, missing = [], []
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    for name in ["meta.jsonl", "vectors.npy", "processed_files.json"]:
-        src = bdir / name
-        if src.exists():
-            shutil.copy2(src, dst_dir / name)
-            restored.append(name)
-        else:
-            missing.append(name)
-    return restored, missing
-
-def backup_age_days_local(backend: str, shard_id: str) -> float | None:
-    import time
-    bdirs = list_backup_dirs_local(backend, shard_id)
-    if not bdirs:
-        return None
-    latest = bdirs[0]
-    mtimes = []
-    for name in ["meta.jsonl", "vectors.npy", "processed_files.json"]:
-        p = latest / name
-        if p.exists():
-            mtimes.append(p.stat().st_mtime)
-    if not mtimes:
-        mtimes.append(latest.stat().st_mtime)
-    age_sec = max(time.time() - max(mtimes), 0.0)
-    return age_sec / 86400.0
-
-# ============================================================
-# processed_files.json 最適化：構造保持での選択削除
-# ============================================================
-def _canon(s: str) -> str:
-    if not s:
-        return ""
-    s = urllib.parse.unquote(s)
-    s = unicodedata.normalize("NFKC", s).strip()
-    s = s.replace("\\", "/")
-    s = os.path.normpath(s).replace("\\", "/")
-    return s.lower()
-
-def _entry_to_pathlike(entry) -> str:
-    if isinstance(entry, str):
-        return entry
-    if isinstance(entry, dict):
-        for k in ("file", "path", "name", "relpath", "source", "original", "orig", "pdf"):
-            v = entry.get(k)
-            if isinstance(v, str) and v.strip():
-                return v
-    return ""
-
-def _load_pf_struct(pf_path: Path):
-    if not pf_path.exists():
-        return "empty", None, []
-    try:
-        root = json.loads(pf_path.read_text(encoding="utf-8"))
-    except Exception:
-        return "unknown", None, []
-
-    if isinstance(root, dict) and isinstance(root.get("done"), list):
-        return "object_done", root, [root["done"]]
-
-    if isinstance(root, list):
-        done_lists = []
-        all_str = True
-        for e in root:
-            if isinstance(e, dict) and isinstance(e.get("done"), list):
-                done_lists.append(e["done"])
-                all_str = False
-            elif not isinstance(e, str):
-                all_str = False
-        if done_lists:
-            return "array_of_done_objects", root, done_lists
-        if all_str:
-            return "array", root, [root]
-
-    return "unknown", root, []
-
-def _save_pf_struct(pf_path: Path, schema: str, root_obj):
-    if schema in ("object_done", "array", "array_of_done_objects") and root_obj is not None:
-        pf_path.write_text(json.dumps(root_obj, ensure_ascii=False, indent=2), encoding="utf-8")
-        return
-
-    items: list[str] = []
-    if isinstance(root_obj, dict) and isinstance(root_obj.get("done"), list):
-        for e in root_obj["done"]:
-            s = _entry_to_pathlike(e)
-            if s:
-                items.append(s)
-    elif isinstance(root_obj, list):
-        for e in root_obj:
-            if isinstance(e, dict) and isinstance(e.get("done"), list):
-                for x in e["done"]:
-                    s = _entry_to_pathlike(x)
-                    if s:
-                        items.append(s)
-            else:
-                s = _entry_to_pathlike(e)
-                if s:
-                    items.append(s)
-    items = sorted(set(items))
-    pf_path.write_text(json.dumps({"done": items}, ensure_ascii=False, indent=2), encoding="utf-8")
-
-def remove_from_processed_files_selective(pf_path: Path, removed_files: list[str]) -> tuple[int, int, int, list[str]]:
-    schema, root, list_refs = _load_pf_struct(pf_path)
-    if not list_refs:
-        return (0, 0, 0, [])
-
-    t_full = {_canon(x) for x in removed_files}
-    t_base = {os.path.basename(x) for x in t_full}
-    t_stem = {os.path.splitext(b)[0] for b in t_base}
-
-    def _match(entry) -> bool:
-        raw = _entry_to_pathlike(entry)
-        cn = _canon(raw)
-        if not cn:
-            return False
-        base = os.path.basename(cn)
-        stem = os.path.splitext(base)[0]
-        return (
-            (cn in t_full) or
-            (base in t_base) or
-            (stem in t_stem) or
-            any(cn.endswith("/" + t) for t in t_full)
-        )
-
-    before_total = sum(len(lst) for lst in list_refs)
-    removed_show: list[str] = []
-
-    for lst in list_refs:
-        new_lst = []
-        for e in lst:
-            if _match(e):
-                raw = _entry_to_pathlike(e)
-                removed_show.append(raw if raw else json.dumps(e, ensure_ascii=False)[:120])
-            else:
-                new_lst.append(e)
-        lst.clear()
-        lst.extend(new_lst)
-
-    _save_pf_struct(pf_path, schema, root)
-
-    after_total = sum(len(lst) for lst in list_refs)
-    removed_count = before_total - after_total
-    return (before_total, after_total, removed_count, removed_show[:10])
-
-# ============================================================
 # 🔁 バックアップ（拡張機能）
 # ============================================================
 st.subheader("🛡️ バックアップ（拡張）")
 
+# === バックアップ保存先の選択（標準 or 外付けSSD） ===
+dest_label = st.radio(
+    "バックアップ保存先",
+    ["標準（backup_root）", "外付けSSD（backup_root2）"],
+    horizontal=True,
+    key="bak_dest"
+)
+# 選択に応じて BACKUP_ROOT を切替
+BACKUP_ROOT = PATHS.backup_root if "標準" in dest_label else PATHS.backup_root2
+try:
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
+st.caption(f"現在のバックアップ保存先: `{BACKUP_ROOT}`")
+
 col_a, col_b, col_c = st.columns(3)
 with col_a:
     if st.button("⚡ 対象シャードを即時バックアップ", width="stretch", key="bak_one"):
-        copied, bdir = backup_all_local(base_dir, backend, shard_id)
+        copied, bdir = backup_all_local(base_dir, BACKUP_ROOT, backend, shard_id)
         if copied:
             st.success(f"[{backend}/{shard_id}] をバックアップ: {bdir}")
         else:
@@ -277,20 +133,20 @@ with col_b:
         summary = []
         for sid in shard_ids:
             sdir = base_backend_dir / sid
-            copied, bdir = backup_all_local(sdir, backend, sid)
+            copied, bdir = backup_all_local(sdir, BACKUP_ROOT, backend, sid)
             summary.append((sid, len(copied), bdir))
         ok = [f"- {sid}: {n}項目 -> {bdir}" for sid, n, bdir in summary]
         st.success("即時バックアップ完了:\n" + "\n".join(ok))
 
 with col_c:
-    threshold = st.selectbox("未バックアップ日数 以上ならバックアップ", [1,2,3,7,14,30], index=2, key="bak_thr")
+    threshold = st.selectbox("未バックアップ日数 以上ならバックアップ", [1, 2, 3, 7, 14, 30], index=2, key="bak_thr")
     if st.button("🗓 条件バックアップを実行", width="stretch", key="bak_cond"):
         triggered, skipped = [], []
         for sid in shard_ids:
-            age = backup_age_days_local(backend, sid)
+            age = backup_age_days_local(BACKUP_ROOT, backend, sid)
             if age is None or age >= float(threshold):
                 sdir = base_backend_dir / sid
-                copied, bdir = backup_all_local(sdir, backend, sid)
+                copied, bdir = backup_all_local(sdir, BACKUP_ROOT, backend, sid)
                 triggered.append((sid, age, len(copied), bdir))
             else:
                 skipped.append((sid, age))
@@ -301,14 +157,62 @@ with col_c:
                 for sid, age, n, bdir in triggered
             )
         if skipped:
-            if msg: msg += "\n\n"
+            if msg:
+                msg += "\n\n"
             msg += "スキップ（閾値未満）:\n" + "\n".join(f"- {sid}: age={age:.2f}d" for sid, age in skipped)
         st.info(msg or "対象がありませんでした。")
 
 st.divider()
 
 # ============================================================
-# プレビュー
+# 🧹 古いバックアップの整理（最新N件 / しきい値日数）
+# ============================================================
+st.subheader("🧹 古いバックアップの整理")
+
+# ★ 対象スコープを選択
+scope_label = st.radio(
+    "削除対象スコープ",
+    ["現在のシャードのみ", "全シャード（backend配下すべて）"],
+    horizontal=True,
+    key="cleanup_scope"
+)
+
+
+c1, c2 = st.columns(2)
+with c1:
+    keep_last = st.number_input("保持する最新バックアップ数", min_value=1, max_value=50, value=3, step=1, key="keep_last_bak")
+    if st.button("🧹 最新N件を残して古いバックアップを削除", width="stretch", key="btn_cleanup_keep_last"):
+        targets = shard_ids if "全シャード" in scope_label else [shard_id]
+        all_deleted = []
+        for sid in targets:
+            deleted = cleanup_old_backups_keep_last(BACKUP_ROOT, backend, sid, keep_last=int(keep_last))
+            all_deleted.extend(deleted)
+        if all_deleted:
+            st.success(f"以下の古いバックアップを削除しました ({len(all_deleted)} 件):\n" +
+                       "\n".join(f"- {d}" for d in all_deleted))
+        else:
+            st.info("削除対象のバックアップはありませんでした。")
+
+
+with c2:
+    older_days = st.number_input("この日数より古いバックアップを削除", min_value=1, max_value=3650, value=90, step=1, key="older_days_bak")
+    if st.button("🧹 しきい値日数より古いバックアップを削除", width="stretch", key="btn_cleanup_older_than"):
+        targets = shard_ids if "全シャード" in scope_label else [shard_id]
+        all_deleted = []
+        for sid in targets:
+            deleted = cleanup_old_backups_older_than_days(BACKUP_ROOT, backend, sid, older_than_days=int(older_days))
+            all_deleted.extend(deleted)
+        if all_deleted:
+            st.success(f"以下の古いバックアップを削除しました ({len(all_deleted)} 件):\n" +
+                       "\n".join(f"- {d}" for d in all_deleted))
+        else:
+            st.info("削除対象のバックアップはありませんでした。")
+
+
+st.divider()
+
+# ============================================================
+# 📄 現状プレビュー
 # ============================================================
 st.subheader("📄 現状プレビュー")
 rows = [dict(obj) for obj in iter_jsonl(meta_path)] if meta_path.exists() else []
@@ -324,10 +228,10 @@ else:
 st.divider()
 
 # ============================================================
-# バックアップ（個別プレビュー）
+# 📦 バックアップ（個別プレビュー）
 # ============================================================
 st.subheader("📦 バックアップ（個別プレビュー）")
-bdirs = list_backup_dirs_local(backend, shard_id)
+bdirs = list_backup_dirs_local(BACKUP_ROOT, backend, shard_id)
 if bdirs:
     sel_bdir_prev = st.selectbox("バックアッププレビュー", bdirs, format_func=lambda p: p.name, key="prev_bdir")
     if sel_bdir_prev:
@@ -338,12 +242,12 @@ else:
 st.divider()
 
 # ============================================================
-# 選択ファイル削除（processed_files の扱いをラジオで選択）
+# 🧹 選択ファイル削除（processed_files の扱いをラジオで選択）
 # ============================================================
 st.subheader("🧹 選択ファイル削除")
 if rows:
     files = sorted(pd.Series([r.get("file") for r in rows if r.get("file")]).unique().tolist())
-    c1, c2 = st.columns([2,1])
+    c1, c2 = st.columns([2, 1])
     with c1:
         target_files = st.multiselect("削除対象ファイル（year/file.pdf など）", files, key="sel_targets")
     with c2:
@@ -351,7 +255,7 @@ if rows:
             "processed_files.json の処理",
             ["選択ファイルを消す（既定）", "完全リセット（全削除）", "変更しない"],
             index=0,
-            key="pf_mode"
+            key="pf_mode",
         )
         confirm_del = st.checkbox("削除に同意します", key="confirm_selective")
 
@@ -360,11 +264,11 @@ if rows:
         type="primary",
         width="stretch",
         disabled=not (target_files and confirm_del),
-        key="btn_selective_delete"
+        key="btn_selective_delete",
     ):
         try:
             # 直前バックアップ
-            copied, bdir = backup_all_local(base_dir, backend, shard_id)
+            copied, bdir = backup_all_local(base_dir, BACKUP_ROOT, backend, shard_id)
 
             # meta.jsonl 再構築 + vectors.npy 同期
             keep_lines, keep_vec_indices = [], []
@@ -410,7 +314,9 @@ if rows:
 
             elif pf_mode == "選択ファイルを消す（既定）":
                 if pf_path.exists():
-                    before, after, removed_pf, removed_list = remove_from_processed_files_selective(pf_path, target_files)
+                    before, after, removed_pf, removed_list = remove_from_processed_files_selective(
+                        pf_path, target_files
+                    )
                     if removed_pf > 0:
                         st.success(
                             "processed_files.json を更新しました:\n"
@@ -441,7 +347,7 @@ if rows:
 st.divider()
 
 # ============================================================
-# 🗂️ シャードごと削除（フォルダ単位の完全削除）
+# 🗂️ シャードごと削除（フォルダ完全削除）
 # ============================================================
 st.subheader("🗂️ シャードごと削除（フォルダ完全削除）")
 
@@ -464,17 +370,14 @@ if base_dir.exists():
 else:
     st.caption("このシャードフォルダは存在しません。")
 
-colx, coly = st.columns([2,1])
+colx, coly = st.columns([2, 1])
 with colx:
     do_backup_before_shard_delete = st.checkbox(
         "削除前に標準バックアップ（meta/vectors/processed）を作成する",
         value=True,
-        key="sharddel_backup"
+        key="sharddel_backup",
     )
-    confirm_shard_del = st.checkbox(
-        "シャードごと削除に同意します（元に戻せません）",
-        key="sharddel_confirm"
-    )
+    confirm_shard_del = st.checkbox("シャードごと削除に同意します（元に戻せません）", key="sharddel_confirm")
 with coly:
     typed = st.text_input("タイプ確認：DELETE と入力", value="", key="sharddel_typed")
 
@@ -483,11 +386,11 @@ if st.button(
     type="secondary",
     width="stretch",
     disabled=not (confirm_shard_del and typed.strip().upper() == "DELETE"),
-    key="sharddel_exec"
+    key="sharddel_exec",
 ):
     try:
         if do_backup_before_shard_delete and base_dir.exists():
-            copied, bdir = backup_all_local(base_dir, backend, shard_id)
+            copied, bdir = backup_all_local(base_dir, BACKUP_ROOT, backend, shard_id)
             st.info(f"事前バックアップ: {bdir} / コピー: {', '.join(copied) if copied else 'なし'}")
 
         if base_dir.exists():
@@ -516,10 +419,10 @@ if rows:
 
     confirm_yp = st.checkbox("削除に同意します（バックアップ推奨）", key="confirm_yearpno")
 
-    if st.button("🧹 year/pno 指定削除を実行", type="primary", disabled=not confirm_yp, key="btn_del_yearpno"):
+    if st.button("🧹 year/pno 指定削除を実行", type="primary", width="stretch", disabled=not confirm_yp, key="btn_del_yearpno"):
         try:
             # バックアップ
-            copied, bdir = backup_all_local(base_dir, backend, shard_id)
+            copied, bdir = backup_all_local(base_dir, BACKUP_ROOT, backend, shard_id)
 
             keep_lines, keep_vec_indices = [], []
             removed_meta, valid_idx = 0, 0
@@ -538,7 +441,7 @@ if rows:
 
                         yr = str(obj.get("year", ""))
                         pno = str(obj.get("pno", ""))
-                        # ★ year/pnoが一致するレコードを削除
+                        # ★ year/pno が一致するレコードを削除
                         if (sel_year != "(未選択)" and yr != sel_year):
                             keep_lines.append(json.dumps(obj, ensure_ascii=False) + "\n")
                             keep_vec_indices.append(valid_idx)
@@ -571,6 +474,7 @@ if rows:
         except Exception as e:
             st.error(f"削除中にエラー: {e}")
 
+st.divider()
 
 # ============================================================
 # 🗑️ 完全初期化（3ファイルのみ削除：meta.jsonl / vectors.npy / processed_files.json）
@@ -597,12 +501,9 @@ with col_init_l:
     do_backup_before_wipe = st.checkbox(
         "削除前に標準バックアップ（meta/vectors/processed）を作成する",
         value=True,
-        key="wipe_backup"
+        key="wipe_backup",
     )
-    confirm_wipe = st.checkbox(
-        "完全初期化に同意します（元に戻せません）",
-        key="wipe_confirm"
-    )
+    confirm_wipe = st.checkbox("完全初期化に同意します（元に戻せません）", key="wipe_confirm")
 with col_init_r:
     typed_init = st.text_input("タイプ確認：DELETE と入力", value="", key="wipe_typed")
 
@@ -611,11 +512,11 @@ if st.button(
     type="secondary",
     width="stretch",
     disabled=not (confirm_wipe and typed_init.strip().upper() == "DELETE"),
-    key="wipe_execute"
+    key="wipe_execute",
 ):
     try:
         if do_backup_before_wipe:
-            copied, bdir = backup_all_local(base_dir, backend, shard_id)
+            copied, bdir = backup_all_local(base_dir, BACKUP_ROOT, backend, shard_id)
             st.info(f"事前バックアップ: {bdir} / コピー: {', '.join(copied) if copied else 'なし'}")
 
         deleted = []
@@ -634,10 +535,10 @@ if st.button(
 st.divider()
 
 # ============================================================
-# バックアップ復元（新ルート）
+# ♻️ バックアップ復元
 # ============================================================
 st.subheader("♻️ バックアップ復元")
-bdirs = list_backup_dirs_local(backend, shard_id)
+bdirs = list_backup_dirs_local(BACKUP_ROOT, backend, shard_id)
 if not bdirs:
     st.info("バックアップがありません。先に『バックアップ作成』を実行してください。")
 else:
@@ -654,5 +555,3 @@ else:
                 st.success(msg)
             except Exception as e:
                 st.error(f"復元中にエラー: {e}")
-
-
