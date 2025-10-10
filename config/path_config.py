@@ -6,30 +6,30 @@ from typing import Any, Dict, Optional, Sequence
 import os
 
 # ============================================================
-# パス設定（settings.toml 版・2025-10対応）
-# - 読み取り元: config/settings.toml
-#   [env]        : location = "Develop" | "Home" | "Prec" | "Server"
-#   [mounts]     : Home="/Volumes/Extreme SSD", Prec="/Volumes/Extreme SSD", Server="/srv/ssd" など
-#   [locations.*]: 環境ごとのルート（pdf_root / backup_root / backup_root2 / data_root）
-#   [app]        : available_presets=["Develop","Home","Prec","Server"]（任意）
+# パス設定（settings.toml + secrets.toml 版・2025-10対応）
+# - 読み取り順:
+#   ◎ location（最優先）: .streamlit/secrets.toml の [env].location
+#   → 次: 環境変数 APP_LOCATION_PRESET
+#   → 次: config/settings.toml 等の [env].location
+#   → 既定: "Develop"
 #
-# - ルート指定の書式:
-#   - "project:<rel>" … APP_ROOT/<rel> に解決
-#   - "mount:<Name>/<subpath>" … [mounts].[Name] を基点に <subpath> へ解決
-#   - 絶対/相対パス … 絶対はそのまま、相対は APP_ROOT 基準
-#
-# - 既定値（locations 未定義時のフォールバック）:
-#   pdf_root    = <APP_ROOT>/pdf
-#   backup_root = <APP_ROOT>/backup
-#   backup_root2= backup_root
-#   data_root   = <APP_ROOT>/data
-#   vs_root     = data_root/vectorstore  ← 自動連動（ENV 上書きは廃止）
-#
-# - 設定ファイルの探索順:
+# - 設定ファイルの探索順（settings.toml）:
 #   1) APP_SETTINGS_FILE（相対なら APP_ROOT 基準）
 #   2) APP_ROOT/config/settings.toml
 #   3) APP_ROOT/.streamlit/settings.toml
 #   4) APP_ROOT/settings.toml
+#
+# - ルート指定の書式:
+#   - "project:<rel>" … APP_ROOT/<rel>
+#   - "mount:<Name>/<subpath>" … [mounts].[Name] を基点に <subpath>
+#   - 絶対/相対 … 絶対はそのまま、相対は APP_ROOT 基準
+#
+# - locations 未定義時の既定:
+#   pdf_root    = <APP_ROOT>/pdf
+#   backup_root = <APP_ROOT>/backup
+#   backup_root2= backup_root
+#   data_root   = <APP_ROOT>/data
+#   vs_root     = data_root/vectorstore
 # ============================================================
 
 # --- toml loader (3.11+: tomllib / fallback: tomli) ---
@@ -129,6 +129,36 @@ def _resolve_root(spec: str | None, *, mounts: dict, default_root: Path) -> Path
     return p.resolve()
 
 
+def _read_location_from_secrets() -> Optional[str]:
+    """
+    .streamlit/secrets.toml の [env].location を最優先で読む。
+    Streamlit 実行外/未設定でも例外で落ちないように安全に扱う。
+    """
+    try:
+        import streamlit as st  # 遅延インポート
+        # st.secrets は Mapping ライク。欠損時は KeyError を投げることがあるので慎重に。
+        env_sec = {}
+        try:
+            env_sec = dict(st.secrets.get("env", {}))  # type: ignore[arg-type]
+        except Exception:
+            # top-level に置かれている可能性に一応対応（非推奨だがフォールバック）
+            env_sec = {}
+        loc = env_sec.get("location")
+        if isinstance(loc, str) and loc.strip():
+            return loc.strip()
+        # 念のため top-level "location" も探す（互換）
+        try:
+            top_loc = st.secrets.get("location", None)  # type: ignore[attr-defined]
+            if isinstance(top_loc, str) and top_loc.strip():
+                return top_loc.strip()
+        except Exception:
+            pass
+        return None
+    except Exception:
+        # streamlit 未導入/Secrets 未セット/実行外 など
+        return None
+
+
 @dataclass
 class PathConfig:
     preset: str
@@ -159,10 +189,11 @@ class PathConfig:
             or ("Develop", "Home", "Prec", "Server")
         )
 
-        # 1) location（プリセット決定）
+        # 1) location（プリセット決定）— ★ secrets 最優先 ★
         preset = _pick(
-            env_sec.get("location"),
-            os.getenv("APP_LOCATION_PRESET"),
+            _read_location_from_secrets(),        # ◎ secrets.toml > [env].location
+            os.getenv("APP_LOCATION_PRESET"),     # ← 環境変数での明示上書き
+            env_sec.get("location"),              # ← settings.toml の値
             "Develop",
         )
         if preset not in available_presets:
@@ -248,10 +279,10 @@ if __name__ == "__main__":
 # $ python config/path_config.py
 # === PathConfig ===
 #  preset       : Home
-#  app_root     : /Users/macmini2025/projects/bot_project/bot_app
+#  app_root     : /Users/you/...
 #  ssd_path     : /Volumes/Extreme SSD
-#  pdf_root     : /Volumes/Extreme SSD/report/pdf
-#  backup_root  : /Users/macmini2025/projects/bot_project/bot_app/database/backup
-#  backup_root2 : /Volumes/Extreme SSD/backup
-#  data_root    : /Users/macmini2025/projects/bot_project/bot_app/database/data
-#  vs_root      : /Users/macmini2025/projects/bot_project/bot_app/database/data/vectorstore
+#  pdf_root     : ...
+#  backup_root  : ...
+#  backup_root2 : ...
+#  data_root    : ...
+#  vs_root      : ...

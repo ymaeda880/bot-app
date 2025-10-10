@@ -6,7 +6,7 @@
 
 [env]
 # 利用する環境を選択: "Develop" / "Home" / "Server / "Prec""
-location = "Home"
+# location = "Home"
 
 [mounts]
 Home    = "/Volumes/Extreme SSD"
