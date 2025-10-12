@@ -1,149 +1,194 @@
 # lib/backup_utils.py
 from __future__ import annotations
 from pathlib import Path
-from datetime import datetime, timezone, timedelta
+from typing import Iterable, Tuple, Optional, List
+from datetime import datetime, timezone
 import shutil
-import pandas as pd
-from typing import List, Tuple, Optional
+import json
+import numpy as np
 
+# ===== 基本ユーティリティ =====
 def timestamp() -> str:
-    """ローカルタイムの YYYYmmdd-HHMMSS を返す。"""
+    # 例: 20251011-093012
     return datetime.now(timezone.utc).astimezone().strftime("%Y%m%d-%H%M%S")
 
-def backup_dir_for(backup_root: Path, backend: str, shard_id: str, ts: Optional[str] = None) -> Path:
-    """バックアップ保存先フォルダ（backup_root/backend/shard_id/timestamp）を返す。"""
+def backup_dir_for(backup_root: Path, backend: str, shard_id: str,
+                   ts: Optional[str] = None, *, label: Optional[str] = None) -> Path:
+    """
+    バックアップ保存先フォルダ
+      例: backup_root/backend/shard_id/20251010-120000-Home[-1-Rollback|-2-PostOp]
+    """
     if ts is None:
         ts = timestamp()
-    return backup_root / backend / shard_id / ts
 
-def backup_all_local(src_dir: Path, backup_root: Path, backend: str, shard_id: str) -> Tuple[List[str], Path]:
+    # secrets.toml から location を取得（無くても落とさない）
+    loc = "unknown"
+    try:
+        import streamlit as st
+        loc = st.secrets["env"]["location"]
+    except Exception:
+        pass
+
+    # ★ 並び順キー: 1 < 2 なので、reverse=True の並びで 2(=PostOp) が先頭 = 最新扱い
+    label_alias = None
+    if label:
+        order_map = {
+            "Rollback": "1-Rollback",
+            "PostOp":   "2-PostOp",
+        }
+        label_alias = order_map.get(label, label)
+
+    suffix = f"-{loc}"
+    if label_alias:
+        suffix += f"-{label_alias}"
+
+    return backup_root / backend / shard_id / f"{ts}{suffix}"
+
+
+# ====== バックアップ/復元 本体 ======
+def _copy_if_exists(src: Path, dst: Path) -> bool:
+    if src.exists():
+        shutil.copy2(src, dst)
+        return True
+    return False
+
+def backup_all_local(shard_dir: Path, backup_root: Path, backend: str, shard_id: str, *, label: Optional[str] = None) -> Tuple[List[str], Path]:
     """
-    src_dir（= VS_ROOT/backend/shard）から meta.jsonl / vectors.npy / processed_files.json を
-    backup_root/backend/shard/<timestamp>/ にコピー。存在するものだけコピー。
-    戻り値: (コピーしたファイル名リスト, 作成先ディレクトリ)
+    シャード内の主要ファイルをまとめて保存:
+      - meta.jsonl / vectors.npy / processed_files.json / （その他 .jsonl/.npy も拾う）
+    label を指定するとディレクトリ名が …-<loc>-<label> になる（例: -Rollback / -PostOp）
     """
-    ts_dir = backup_dir_for(backup_root, backend, shard_id)
-    ts_dir.mkdir(parents=True, exist_ok=True)
+    bdir = backup_dir_for(backup_root, backend, shard_id, label=label)
+    bdir.mkdir(parents=True, exist_ok=True)
+
     copied: List[str] = []
-    for name in ["meta.jsonl", "vectors.npy", "processed_files.json"]:
-        src = src_dir / name
-        if src.exists():
-            shutil.copy2(src, ts_dir / name)
+
+    # 既知の主要ファイル
+    for name in ("meta.jsonl", "vectors.npy", "processed_files.json"):
+        if _copy_if_exists(shard_dir / name, bdir / name):
             copied.append(name)
-    return copied, ts_dir
 
-def list_backup_dirs_local(backup_root: Path, backend: str, shard_id: str) -> List[Path]:
-    """バックアップフォルダ一覧（新しい順）。"""
-    root = backup_root / backend / shard_id
-    if not root.exists():
+    # 念のため同階層の .jsonl/.npy も保全（重複は上のcopy2で上書き）
+    for p in shard_dir.glob("*.jsonl"):
+        if p.name not in copied and _copy_if_exists(p, bdir / p.name):
+            copied.append(p.name)
+    for p in shard_dir.glob("*.npy"):
+        if p.name not in copied and _copy_if_exists(p, bdir / p.name):
+            copied.append(p.name)
+
+    return copied, bdir
+
+
+def list_backup_dirs_local(backup_root: Path, backend: str, shard_id: str, *, include_rollback: bool = True) -> List[Path]:
+    """
+    シャードのバックアップディレクトリ一覧を新しい順に返す。
+    include_rollback=False のとき、名前末尾に '-Rollback' を含むフォルダを除外。
+    """
+    base = backup_root / backend / shard_id
+    if not base.exists():
         return []
-    return sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name, reverse=True)
+    dirs = [p for p in base.iterdir() if p.is_dir()]
+    if not include_rollback:
+        dirs = [p for p in dirs if "-Rollback" not in p.name]
+    # フォルダ名の辞書順≒時間降順（フォーマットが %Y%m%d-%H%M%S-<loc>… なので）
+    return sorted(dirs, key=lambda p: p.name, reverse=True)
 
-def preview_backup_local(bdir: Path) -> pd.DataFrame:
-    """バックアップ1個の中身サイズ一覧を DataFrame で返す。"""
-    rows = []
-    for name in ["meta.jsonl", "vectors.npy", "processed_files.json"]:
+
+def preview_backup_local(bdir: Path):
+    """
+    バックアップフォルダ内の主要ファイルを簡易プレビュー用の DataFrame にする。
+    呼び出し側（Streamlit）で pd.DataFrame に渡す前提のレコード（辞書）を返す。
+    """
+    recs = []
+    for name in ("meta.jsonl", "vectors.npy", "processed_files.json"):
         p = bdir / name
-        if p.exists():
-            size = p.stat().st_size
-            rows.append({"name": name, "size(bytes)": size, "path": str(p)})
-    return pd.DataFrame(rows)
+        exists = p.exists()
+        size = p.stat().st_size if exists else 0
+        info = {"file": name, "exists": exists, "size": size}
+        if exists and name == "vectors.npy":
+            try:
+                arr = np.load(p)
+                info["shape"] = tuple(arr.shape)
+            except Exception:
+                info["shape"] = None
+        recs.append(info)
+    try:
+        import pandas as pd
+        return pd.DataFrame.from_records(recs)
+    except Exception:
+        return recs
 
-def restore_from_backup_local(dst_dir: Path, bdir: Path) -> Tuple[List[str], List[str]]:
-    """バックアップから meta.jsonl / vectors.npy / processed_files.json を復元。"""
+
+def restore_from_backup_local(shard_dir: Path, bdir: Path):
+    """
+    バックアップから主要ファイルを復元（上書き）
+    戻り値: (restored list, missing list)
+    """
+    shard_dir.mkdir(parents=True, exist_ok=True)
     restored, missing = [], []
-    dst_dir.mkdir(parents=True, exist_ok=True)
-    for name in ["meta.jsonl", "vectors.npy", "processed_files.json"]:
+    for name in ("meta.jsonl", "vectors.npy", "processed_files.json"):
         src = bdir / name
+        dst = shard_dir / name
         if src.exists():
-            shutil.copy2(src, dst_dir / name)
-            restored.append(name)
+            shutil.copy2(src, dst)
+            restored.append(f"{name} <- {src.name}")
         else:
             missing.append(name)
     return restored, missing
 
+
 def backup_age_days_local(backup_root: Path, backend: str, shard_id: str) -> Optional[float]:
-    """最新バックアップからの経過日数（最終更新基準）。バックアップ無しなら None。"""
-    import time
-    bdirs = list_backup_dirs_local(backup_root, backend, shard_id)
-    if not bdirs:
+    """
+    直近（Rollback を除外）のバックアップからの経過日数を返す。
+    無ければ None
+    """
+    dirs = list_backup_dirs_local(backup_root, backend, shard_id, include_rollback=False)
+    if not dirs:
         return None
-    latest = bdirs[0]
-    mtimes = []
-    for name in ["meta.jsonl", "vectors.npy", "processed_files.json"]:
-        p = latest / name
-        if p.exists():
-            mtimes.append(p.stat().st_mtime)
-    if not mtimes:
-        mtimes.append(latest.stat().st_mtime)
-    age_sec = max(time.time() - max(mtimes), 0.0)
-    return age_sec / 86400.0
+    latest = dirs[0]
+    # フォルダ名の先頭 "YYYYMMDD-HHMMSS" から日時を読む（失敗しても None）
+    try:
+        ts = latest.name.split("-")[0] + "-" + latest.name.split("-")[1]
+        dt = datetime.strptime(ts, "%Y%m%d-%H%M%S")
+        now = datetime.now()
+        return (now - dt).total_seconds() / 86400.0
+    except Exception:
+        return None
 
-# ===== 古いバックアップ削除 =====
 
-def cleanup_old_backups_keep_last(backup_root: Path, backend: str, shard_id: str, keep_last: int = 3) -> List[Path]:
+def cleanup_old_backups_keep_last(backup_root: Path, backend: str, shard_id: str, *, keep_last: int = 3) -> List[Path]:
     """
-    最新 keep_last 件を残して古いバックアップを削除する。
-    戻り値: 削除したフォルダのリスト
+    最新 keep_last 件を残して、それより古いバックアップを削除（Rollback含む）
     """
-    root = backup_root / backend / shard_id
-    if not root.exists():
-        return []
-    dirs = sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name, reverse=True)
-    to_delete = dirs[keep_last:] if len(dirs) > keep_last else []
+    dirs = list_backup_dirs_local(backup_root, backend, shard_id, include_rollback=True)
+    to_delete = dirs[keep_last:]
     deleted = []
     for d in to_delete:
         try:
             shutil.rmtree(d)
             deleted.append(d)
-        except Exception as e:
-            print(f"[cleanup_old_backups_keep_last] 削除失敗: {d} ({e})")
-    return deleted
-
-def cleanup_old_backups_older_than_days(backup_root: Path, backend: str, shard_id: str, older_than_days: int) -> List[Path]:
-    """
-    バックアップフォルダ名の timestamp（YYYYmmdd-HHMMSS）またはフォルダ/中身の mtime が
-    指定日数より古いものを削除。
-    戻り値: 削除したフォルダのリスト
-    """
-    threshold_dt = datetime.now(timezone.utc).astimezone() - timedelta(days=older_than_days)
-    root = backup_root / backend / shard_id
-    if not root.exists():
-        return []
-    deleted = []
-    for d in sorted([p for p in root.iterdir() if p.is_dir()], key=lambda p: p.name, reverse=True):
-        # 1) フォルダ名から日時を推定
-        dt_from_name = None
-        try:
-            dt_from_name = datetime.strptime(d.name, "%Y%m%d-%H%M%S").astimezone()
         except Exception:
             pass
+    return deleted
 
-        if dt_from_name is not None:
-            dt_candidate = dt_from_name
-        else:
-            # 2) フォルダ内の最新 mtime で判定
-            latest_mtime = None
-            for p in d.rglob("*"):
-                try:
-                    mt = p.stat().st_mtime
-                except Exception:
-                    continue
-                if latest_mtime is None or mt > latest_mtime:
-                    latest_mtime = mt
-            if latest_mtime is None:
-                try:
-                    latest_mtime = d.stat().st_mtime
-                except Exception:
-                    latest_mtime = None
-            if latest_mtime is None:
-                continue
-            dt_candidate = datetime.fromtimestamp(latest_mtime).astimezone()
 
-        if dt_candidate < threshold_dt:
-            try:
+def cleanup_old_backups_older_than_days(backup_root: Path, backend: str, shard_id: str, *, older_than_days: int = 90) -> List[Path]:
+    """
+    older_than_days より古いバックアップを削除（Rollback含む）
+    """
+    dirs = list_backup_dirs_local(backup_root, backend, shard_id, include_rollback=True)
+    deleted = []
+    for d in dirs:
+        try:
+            # "YYYYMMDD-HHMMSS" → 日数判定
+            parts = d.name.split("-")
+            ts = f"{parts[0]}-{parts[1]}"
+            dt = datetime.strptime(ts, "%Y%m%d-%H%M%S")
+            age_days = (datetime.now() - dt).days
+            if age_days > older_than_days:
                 shutil.rmtree(d)
                 deleted.append(d)
-            except Exception as e:
-                print(f"[cleanup_old_backups_older_than_days] 削除失敗: {d} ({e})")
+        except Exception:
+            # 解析できない名前は消さない
+            pass
     return deleted

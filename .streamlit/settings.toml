@@ -5,7 +5,7 @@
 # develop/ はgitする（試験用）
 
 [env]
-# 利用する環境を選択: "Develop" / "Home" / "Server / "Prec""
+# 利用する環境を選択: "Develop" / "Home" / "Server / "Prec" / "Portable"
 # location = "Home"
 
 [mounts]
@@ -26,6 +26,15 @@ data_root   = "project:develop/data"
 pdf_root    = "mount:Home/report/pdf"
 backup_root = "project:database/backup"
 backup_root2 = "mount:Home/backup"
+backup_root3 = "mount:Home/backup2"
+data_root   = "project:database/data"
+
+# Portable（Mac 運用環境（macbook））: 外付けSSDを利用
+[locations.Portable]
+pdf_root    = "mount:Home/report/pdf"
+backup_root = "project:database/backup"
+backup_root2 = "mount:Home/backup"
+backup_root3 = "mount:Home/backup2"
 data_root   = "project:database/data"
 
 # Prec（Mac 運用環境（Prec））: 外付けSSDを利用
@@ -33,6 +42,7 @@ data_root   = "project:database/data"
 pdf_root    = "mount:Prec/report/pdf"
 backup_root = "project:database/backup"
 backup_root2 = "mount:Prec/backup"
+backup_root3 = "mount:Prec/backup2"
 data_root   = "project:database/data"
 
 # Server（サーバー環境）
@@ -43,5 +53,5 @@ data_root   = "mount:Server/data"
 
 # ===== 共通アプリ設定 =====
 [app]
-available_presets = ["Develop", "Home", "Prec", "Server"]
+available_presets = ["Develop", "Home", "Prec", "Server", "Portable"]
 # bot_bucket        = "bot_data"

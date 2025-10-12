@@ -25,11 +25,12 @@ import os
 #   - 絶対/相対 … 絶対はそのまま、相対は APP_ROOT 基準
 #
 # - locations 未定義時の既定:
-#   pdf_root    = <APP_ROOT>/pdf
-#   backup_root = <APP_ROOT>/backup
-#   backup_root2= backup_root
-#   data_root   = <APP_ROOT>/data
-#   vs_root     = data_root/vectorstore
+#   pdf_root      = <APP_ROOT>/pdf
+#   backup_root   = <APP_ROOT>/backup
+#   backup_root2  = backup_root
+#   backup_root3  = backup_root2
+#   data_root     = <APP_ROOT>/data
+#   vs_root       = data_root/vectorstore
 # ============================================================
 
 # --- toml loader (3.11+: tomllib / fallback: tomli) ---
@@ -136,17 +137,14 @@ def _read_location_from_secrets() -> Optional[str]:
     """
     try:
         import streamlit as st  # 遅延インポート
-        # st.secrets は Mapping ライク。欠損時は KeyError を投げることがあるので慎重に。
         env_sec = {}
         try:
             env_sec = dict(st.secrets.get("env", {}))  # type: ignore[arg-type]
         except Exception:
-            # top-level に置かれている可能性に一応対応（非推奨だがフォールバック）
             env_sec = {}
         loc = env_sec.get("location")
         if isinstance(loc, str) and loc.strip():
             return loc.strip()
-        # 念のため top-level "location" も探す（互換）
         try:
             top_loc = st.secrets.get("location", None)  # type: ignore[attr-defined]
             if isinstance(top_loc, str) and top_loc.strip():
@@ -155,7 +153,6 @@ def _read_location_from_secrets() -> Optional[str]:
             pass
         return None
     except Exception:
-        # streamlit 未導入/Secrets 未セット/実行外 など
         return None
 
 
@@ -167,6 +164,7 @@ class PathConfig:
     pdf_root: Path
     backup_root: Path
     backup_root2: Path      # 未指定時は backup_root と同じ
+    backup_root3: Path      # 未指定時は backup_root2 と同じ
     data_root: Path
     vs_root: Path
 
@@ -209,15 +207,16 @@ class PathConfig:
         cur_loc = dict(locs_sec.get(preset, {}))
 
         # 4) 既定ルート（locations 未定義時のフォールバック）
-        default_pdf_root    = (APP_ROOT / "pdf").resolve()
-        default_backup_root = (APP_ROOT / "backup").resolve()
-        default_data_root   = (APP_ROOT / "data").resolve()
+        default_pdf_root     = (APP_ROOT / "pdf").resolve()
+        default_backup_root  = (APP_ROOT / "backup").resolve()
+        default_data_root    = (APP_ROOT / "data").resolve()
 
         # 5) 各 root 解決
-        pdf_root     = _resolve_root(cur_loc.get("pdf_root"),     mounts=mounts_sec, default_root=default_pdf_root)
-        backup_root  = _resolve_root(cur_loc.get("backup_root"),  mounts=mounts_sec, default_root=default_backup_root)
-        backup_root2 = _resolve_root(cur_loc.get("backup_root2"), mounts=mounts_sec, default_root=backup_root)
-        data_root    = _resolve_root(cur_loc.get("data_root"),    mounts=mounts_sec, default_root=default_data_root)
+        pdf_root      = _resolve_root(cur_loc.get("pdf_root"),      mounts=mounts_sec, default_root=default_pdf_root)
+        backup_root   = _resolve_root(cur_loc.get("backup_root"),   mounts=mounts_sec, default_root=default_backup_root)
+        backup_root2  = _resolve_root(cur_loc.get("backup_root2"),  mounts=mounts_sec, default_root=backup_root)
+        backup_root3  = _resolve_root(cur_loc.get("backup_root3"),  mounts=mounts_sec, default_root=backup_root2)
+        data_root     = _resolve_root(cur_loc.get("data_root"),     mounts=mounts_sec, default_root=default_data_root)
 
         # 6) VS 出力（data_root/vectorstore に自動連動）
         vs_root = (data_root / "vectorstore").resolve()
@@ -229,6 +228,7 @@ class PathConfig:
             pdf_root=pdf_root,
             backup_root=backup_root,
             backup_root2=backup_root2,
+            backup_root3=backup_root3,
             data_root=data_root,
             vs_root=vs_root,
         )
@@ -237,7 +237,7 @@ class PathConfig:
 
     def ensure_dirs(self):
         """書き込み不能な場所でも落ちないように保護して作成。"""
-        for p in (self.data_root, self.vs_root, self.backup_root, self.backup_root2):
+        for p in (self.data_root, self.vs_root, self.backup_root, self.backup_root2, self.backup_root3):
             try:
                 p.mkdir(parents=True, exist_ok=True)
             except Exception:
@@ -260,6 +260,7 @@ class PathConfig:
             f" pdf_root     : {self.pdf_root}",
             f" backup_root  : {self.backup_root}",
             f" backup_root2 : {self.backup_root2}",
+            f" backup_root3 : {self.backup_root3}",
             f" data_root    : {self.data_root}",
             f" vs_root      : {self.vs_root}",
         ]
@@ -284,5 +285,6 @@ if __name__ == "__main__":
 #  pdf_root     : ...
 #  backup_root  : ...
 #  backup_root2 : ...
+#  backup_root3 : ...
 #  data_root    : ...
 #  vs_root      : ...

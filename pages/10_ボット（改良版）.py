@@ -33,6 +33,9 @@ from lib.bot_utils import (
     year_ok, pno_ok, file_ok, scan_candidate_files, filters_caption,
 )
 
+#from lib.ui import warn_before_close
+#warn_before_close()  # ←これでOK！
+
 # ===== 単価テーブル（USD/1K tok に整形） ======================================
 MODEL_PRICES_PER_1K = {
     m: {"in": float(p.get("in", 0.0))/1000.0, "out": float(p.get("out", 0.0))/1000.0}
