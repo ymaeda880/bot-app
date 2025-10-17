@@ -22,3 +22,6 @@ python-docx
 
 # Excel 出力
 xlsxwriter
+
+# メモリ管理
+psutil

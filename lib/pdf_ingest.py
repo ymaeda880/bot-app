@@ -24,8 +24,8 @@ except Exception:
         _enc = None  # 最終フォールバック（None のときは単純 len）
 
 # 外部依存（本リポ内）
-from lib.rag_utils import split_text, EmbeddingStore, NumpyVectorDB, ProcessedFilesSimple  # noqa: F401 (ProcessedFilesSimpleは他ファイルで使用)
-from lib.vectorstore_utils import load_processed_files, save_processed_files
+from lib.rag.rag_utils import split_text, EmbeddingStore, NumpyVectorDB, ProcessedFilesSimple  # noqa: F401 (ProcessedFilesSimpleは他ファイルで使用)
+from lib.rag.vectorstore_utils import load_processed_files, save_processed_files
 from lib.text_normalize import normalize_ja_text
 
 OPENAI_EMBED_MODEL = "text-embedding-3-large"

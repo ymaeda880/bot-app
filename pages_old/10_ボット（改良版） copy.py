@@ -18,7 +18,7 @@ from config.sample_questions import SAMPLES, ALL_SAMPLES
 from lib.text_normalize import normalize_ja_text
 from lib.prompts.bot_prompt import build_prompt
 from lib.gpt_responder import GPTResponder, CompletionResult
-from lib.rag_utils import EmbeddingStore, NumpyVectorDB
+from lib.rag.rag_utils import EmbeddingStore, NumpyVectorDB
 from lib.costs import (
     MODEL_PRICES_USD, EMBEDDING_PRICES_USD, DEFAULT_USDJPY,
     ChatUsage, estimate_chat_cost, estimate_embedding_cost, usd_to_jpy,
@@ -53,6 +53,17 @@ if "q" not in st.session_state:
 
 def _set_q(x: str) -> None:
     st.session_state.q = x or ""
+
+####################
+# メモリ監視処理
+# pages/10_ボット（改良版）.py の末尾などで
+#####################
+
+from lib.monitors.ui_memory_monitor import render_memory_kpi_row
+
+st.divider()
+st.markdown("### 🧠 メモリ状況（参考）")
+render_memory_kpi_row()
 
 # ===== サイドバー ==============================================================
 with st.sidebar:
@@ -224,6 +235,7 @@ if go and st.session_state.q.strip():
                 st.warning("該当コンテキストが見つかりませんでした。")
             st.stop()
 
+
         # ---- 回答生成 ----
         chat_prompt_tokens = chat_completion_tokens = 0
         use_backend = "OpenAI" if (answer_backend == "OpenAI" and api_key) else "Retrieve-only"
@@ -237,46 +249,48 @@ if go and st.session_state.q.strip():
                 question, labeled, sys_inst=sys_inst, style_hint=detail, cite=cite, strict=False
             )
             responder = GPTResponder(api_key=api_key)
-            use_stream = (display_mode == "逐次表示（ストリーム）")
+            use_stream = (display_mode == "逐次表示（ストリーム）")  # ← ラジオボタンで切替
 
+            # 🔹 逐次出力（ストリーミング）
             if use_stream:
                 st.subheader("🧠 回答（逐次表示）")
-                st.write_stream(responder.stream(
-                    model=chat_model, system_instruction=sys_inst, user_content=prompt,
-                    max_output_tokens=int(max_tokens), on_error_text="Responses stream error."
-                ))
-                answer = responder.final_text or ""
+                with st.chat_message("assistant"):
+                    answer = st.write_stream(
+                        responder.stream(
+                            model=chat_model,
+                            system_instruction=sys_inst,
+                            user_content=prompt,
+                            max_output_tokens=int(max_tokens),
+                            on_error_text="Responses stream error."
+                        )
+                    )
                 chat_prompt_tokens = responder.usage.input_tokens
                 chat_completion_tokens = responder.usage.output_tokens
 
-                enriched = enrich_citations(answer, raw_hits)
-                import re as _re
-                citations = _re.findall(r"\[S[^\]]+\]", enriched)
-                if citations:
-                    seen = []
-                    for c in citations:
-                        if c not in seen:
-                            seen.append(c)
-                    with st.expander("📝 出典拡張済み最終テキスト", expanded=False):
-                        st.caption("以下は回答内の出典タグを整理した一覧です。")
-                        st.markdown("### 📚 出典（出典ごとに改行）")
-                        st.text("\n".join(seen))
-                else:
-                    st.caption("出典タグは検出されませんでした。")
+            # 🔹 一括表示モード
             else:
                 with st.spinner("回答生成中…"):
                     result: CompletionResult = responder.complete(
-                        model=chat_model, system_instruction=sys_inst,
-                        user_content=prompt, max_output_tokens=int(max_tokens)
+                        model=chat_model,
+                        system_instruction=sys_inst,
+                        user_content=prompt,
+                        max_output_tokens=int(max_tokens)
                     )
                 answer = enrich_citations(result.text or "", raw_hits)
                 chat_prompt_tokens = result.usage.input_tokens
                 chat_completion_tokens = result.usage.output_tokens
-                st.subheader("🧠 回答")
+
+                st.subheader("🧠 回答（一括表示）")
                 st.write(answer)
+
         else:
             st.subheader("🧩 取得のみ（要約なし）")
             st.info("Retrieve-only モードです。下の参照コンテキストをご覧ください。")
+
+
+
+
+
 
         # ---- コスト表示 ----
         emb_cost_usd = estimate_embedding_cost("text-embedding-3-large", question_tokens)["usd"]
@@ -322,3 +336,11 @@ if go and st.session_state.q.strip():
         st.error(f"検索/生成中にエラー: {e}")
 else:
     st.info("質問を入力して『送信』を押してください。サイドバーで設定できます。")
+
+# メモリ監視処理
+# pages/10_ボット（改良版）.py の末尾などで
+# from lib.monitors.ui_memory_monitor import render_memory_kpi_row
+
+# st.divider()
+# st.markdown("### 🧠 メモリ状況（参考）")
+# render_memory_kpi_row()

@@ -225,7 +225,7 @@ def file_ok(meta: Dict[str, Any], whitelist_norm: Set[str]) -> bool:
 # ---- meta.jsonl を軽く走査して候補ファイルを抽出 -------------------
 # lib.vectorstore_utils.iter_jsonl が無くても動くようフォールバック
 try:
-    from lib.vectorstore_utils import iter_jsonl as _iter_jsonl  # type: ignore
+    from lib.rag.vectorstore_utils import iter_jsonl as _iter_jsonl  # type: ignore
 except Exception:
     def _iter_jsonl(p: Path) -> Iterable[Dict[str, Any]]:
         if not p.exists():

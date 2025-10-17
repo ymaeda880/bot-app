@@ -1,3 +1,6 @@
+#
+# 現在は使用していない
+
 import streamlit as st
 
 def hide_deploy_button():

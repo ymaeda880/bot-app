@@ -1,4 +1,5 @@
 
+# pages/30_pdfベクトル化.py
 
 """
 # ─────────────────────────────────────────────────────────────
@@ -56,8 +57,8 @@ import time
 import streamlit as st
 
 from config.path_config import PATHS
-from config import pricing
-from lib.rag_utils import EmbeddingStore, NumpyVectorDB, ProcessedFilesSimple
+from lib.costs import estimate_embedding_cost, summarize_embedding_cost_from_meta, DEFAULT_USDJPY
+from lib.rag.rag_utils import EmbeddingStore, NumpyVectorDB, ProcessedFilesSimple
 
 # 主要ロジックは lib 側へ分離（UI から関数を呼び出すだけ）
 from lib.pdf_ingest import (
@@ -67,6 +68,8 @@ from lib.pdf_ingest import (
     migrate_processed_files_to_canonical, ingest_pdf_file,
     get_vector_count,
 )
+
+
 
 # ============================================================
 # ユーティリティ（_skip / _side.json(ocr in {skipped,failed,locked}) 除外）
@@ -307,12 +310,12 @@ if run:
         per = (i_done / i_total) if i_total else 0.0
         avg = (elapsed / max(i_done, 1))
         eta = (i_total - i_done) * avg
-        stat_cols[0].metric("新規ファイル", new_files)
-        stat_cols[1].metric("既取込スキップ", skipped_done)
-        stat_cols[2].metric("side除外", skipped_side)
-        stat_cols[3].metric("_skip除外", skipped_name)
-        stat_cols[4].metric("失敗", failed_files)
-        stat_cols[5].metric("追加チャンク", add_chunks)
+        stat_cols[0].write(f"**新規ファイル:** {new_files}")
+        stat_cols[1].write(f"**既取込スキップ:** {skipped_done}")
+        stat_cols[2].write(f"**side除外:** {skipped_side}")
+        stat_cols[3].write(f"**_skip除外:** {skipped_name}")
+        stat_cols[4].write(f"**失敗:** {failed_files}")
+        stat_cols[5].write(f"**追加チャンク:** {add_chunks}")
         overall_progress.progress(
             min(0.20 + 0.80 * per, 1.0),
             text=f"処理中… {i_done}/{i_total} ファイル（経過 {int(elapsed)}秒 / 予測残り {_fmt_eta(eta)}）"
@@ -424,24 +427,66 @@ if run:
         f"✅ 完了: 新規 {total_files_new} ファイル / {total_chunks} チャンク（_ocr優先・side/_skip除外）",
         icon="✅",
     )
+    
+    # # 概算コスト（openai のみ）
+    # if total_chunks > 0 and backend == "openai":
+    #     st.markdown("### 💰 埋め込みコストの概算")
+    #     total_tokens = 0
+    #     meta_path = VS_ROOT / backend / selected_shard / "meta.jsonl"
+    #     if meta_path.exists():
+    #         with meta_path.open("r", encoding="utf-8") as f:
+    #             for line in f:
+    #                 try:
+    #                     obj = json.loads(line)
+    #                 except Exception:
+    #                     continue
+    #                 total_tokens += int(obj.get("chunk_len_tokens", 0))
 
-    # 概算コスト（openai のみ）
+    #     # lib.costs に統一
+    #     est = estimate_embedding_cost(OPENAI_EMBED_MODEL, total_tokens)  # {"usd":..., "jpy":...}
+    #     usd = float(est["usd"])
+    #     jpy = float(est["jpy"])
+
+    #     st.write(f"- モデル: **{OPENAI_EMBED_MODEL}**")
+    #     st.write(f"- 総トークン数: {total_tokens:,}")
+    #     st.write(f"- 概算コスト: `${usd:.4f}` ≈ ¥{jpy:,.0f}（為替 {DEFAULT_USDJPY:.2f} JPY/USD）")
+    # elif total_chunks > 0:
+    #     st.info("local backend のためコストは発生しません。")
+
+    # === 概算コスト（openai のみ） ===
     if total_chunks > 0 and backend == "openai":
-        st.markdown("### 💰 埋め込みコストの概算")
-        total_tokens = 0
-        meta_path = (VS_ROOT / backend / selected_shard / "meta.jsonl")
-        if meta_path.exists():
-            with meta_path.open("r", encoding="utf-8") as f:
-                for line in f:
-                    try:
-                        obj = json.loads(line)
-                    except Exception:
-                        continue
-                    total_tokens += int(obj.get("chunk_len_tokens", 0))
-        usd = pricing.estimate_embedding_cost_usd(total_tokens, OPENAI_EMBED_MODEL)
-        jpy = pricing.estimate_embedding_cost_jpy(total_tokens, OPENAI_EMBED_MODEL)
-        st.write(f"- モデル: **{OPENAI_EMBED_MODEL}**")
-        st.write(f"- 総トークン数: {total_tokens:,}")
-        st.write(f"- 概算コスト: `${usd:.4f}` ≈ ¥{jpy:,.0f}")
+        from lib.costs import summarize_embedding_cost_from_meta, DEFAULT_USDJPY
+
+        st.markdown("### 💰 埋め込みコストの概算（検証付き）")
+
+        meta_path = VS_ROOT / backend / selected_shard / "meta.jsonl"
+        summary = summarize_embedding_cost_from_meta(
+            meta_path,
+            model=OPENAI_EMBED_MODEL,
+            rate=DEFAULT_USDJPY,
+            include_source_paths=[pdf_path.name],  # 今回のPDF名で絞り込み
+        )
+
+        # ────── 概算表示 ──────
+        st.write(f"- モデル: **{summary['model']}** (${summary['price_per_1M']:.3f} / 1M tok)")
+        st.write(f"- チャンク数: {summary['n_chunks']:,}")
+        st.write(f"- 総トークン数: {summary['total_tokens']:,}")
+        st.write(
+            f"- 概算コスト: `${summary['usd']:.4f}` ≈ ¥{summary['jpy']:,.0f} "
+            f"（為替 {summary['rate']:.2f} JPY/USD）"
+        )
+
+        # ────── サニティ情報 ──────
+        st.caption(
+            f"Sanity: avg={summary['avg_tok']:,.0f} tok/chunk, "
+            f"p95={summary['p95_tok']:,.0f}, max={summary['max_tok']:,.0f}"
+        )
+
+        # ────── 警告表示 ──────
+        for w in summary["warnings"]:
+            st.warning(w)
+
     elif total_chunks > 0:
         st.info("local backend のためコストは発生しません。")
+
+

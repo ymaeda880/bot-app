@@ -19,9 +19,9 @@ import numpy as np
 import tiktoken
 
 from config.path_config import PATHS
-from config import pricing
-from lib.rag_utils import split_text, EmbeddingStore, NumpyVectorDB, ProcessedFilesSimple
-from lib.vectorstore_utils import load_processed_files, save_processed_files
+from config import openai_config
+from lib.rag.rag_utils import split_text, EmbeddingStore, NumpyVectorDB, ProcessedFilesSimple
+from lib.rag.vectorstore_utils import load_processed_files, save_processed_files
 from lib.text_normalize import normalize_ja_text
 
 # ============================================================
@@ -323,8 +323,8 @@ if run:
                         total_tokens += int(obj.get("chunk_len_tokens", 0))
 
             model = OPENAI_EMBED_MODEL  # large 固定
-            usd = pricing.estimate_embedding_cost_usd(total_tokens, model)
-            jpy = pricing.estimate_embedding_cost_jpy(total_tokens, model)
+            usd = openai_config.estimate_embedding_cost_usd(total_tokens, model)
+            jpy = openai_config.estimate_embedding_cost_jpy(total_tokens, model)
 
             st.write(f"- モデル: **{model}**")
             st.write(f"- 総トークン数: {total_tokens:,}")

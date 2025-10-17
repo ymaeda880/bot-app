@@ -22,7 +22,7 @@ import pandas as pd
 import streamlit as st
 
 from config.path_config import PATHS  # ✅ vs_root / backup_root を集中管理
-from lib.vectorstore_utils import iter_jsonl  # 既存ユーティリティ
+from lib.rag.vectorstore_utils import iter_jsonl  # 既存ユーティリティ
 
 # 🔁 外部ユーティリティ（lib 下へ切り出し済み）
 from lib.backup_utils import (
