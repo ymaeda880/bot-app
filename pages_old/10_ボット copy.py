@@ -2,8 +2,6 @@
 # =============================================================================
 # 💬 Internal Bot (RAG, Shards) — year/pno フィルタ付き（候補プリフィルタ＋TopKブースト）
 # + ⏱ 実行タイミング計測（VectorDB 走査 / 埋め込み / 検索 / GPT API / ストリーム）
-# + 👤 ログイン表示バッジ（右上）
-# + 📝 JSONL ログ（ユーザー入力のみ / プリセット直送は除外 / 詳しさは日本語と英語コード）
 # =============================================================================
 
 from __future__ import annotations
@@ -42,204 +40,23 @@ import datetime as dt
 import time
 
 
-from io import BytesIO
-try:
-    from docx import Document
-    from docx.shared import Pt
-    from docx.enum.text import WD_ALIGN_PARAGRAPH
-except Exception:
-    Document = None  # python-docx 未導入時のフォールバック用
-
-
-
-# ============================================================
-# sys.path に common_lib を確実に追加（上方探索）
-# ============================================================
-import sys
-from pathlib import Path
-
-_THIS = Path(__file__).resolve()
-# 例: .../projects/bot_project/bot_app/pages/10_ボット.py
-APP_DIR = _THIS.parents[1]        # .../bot_app
-PROJ_DIR = _THIS.parents[2]       # .../bot_project
-MONO_ROOT = _THIS.parents[3]      # .../projects  ← common_lib がここ直下にある想定
-
-for p in (MONO_ROOT, PROJ_DIR, APP_DIR):
-    if str(p) not in sys.path:
-        sys.path.insert(0, str(p))
-# ============================================================
-
-# === 追加インポート（ログイン表示・JSONLロガー） ============================
-from common_lib.auth.auth_helpers import get_current_user_from_session_or_cookie
-from common_lib.logs.jsonl_logger import JsonlLogger, sha256_short
-
-# アプリ／ページ情報とロガー初期化
-_APP_DIR = Path(__file__).resolve().parents[1]
-_PAGE_NAME = Path(__file__).stem
-logger = JsonlLogger(app_dir=_APP_DIR, page_name=_PAGE_NAME)
-
-# ユーザープロンプト本文をログ保存するか
-INCLUDE_FULL_PROMPT_IN_LOG = True
-
+# from lib.ui import warn_before_close
+# warn_before_close()  # ←必要なら有効化
 
 # ===== 価格テーブル整形（USD/1K tok） =======================================
 MODEL_PRICES_PER_1K = _model_prices_per_1k()
 
 VS_ROOT: Path = PATHS.vs_root
 
-# ===== wordへ出力するための関数 =======================================
-def _build_docx(prompt_text: str, answer_text: str, meta: Dict[str, Any], filters: Dict[str, Any] | None = None) -> bytes:
-    if Document is None:
-        raise RuntimeError("python-docx が見つかりません。`pip install python-docx` を実行してください。")
-    doc = Document()
-
-    # タイトル
-    title = doc.add_paragraph("Internal Bot 応答")
-    title.runs[0].font.size = Pt(16)
-    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
-
-    # メタ情報
-    doc.add_paragraph("")
-    m = doc.add_paragraph()
-    m.add_run("Meta").bold = True
-    doc.add_paragraph(f"User: {meta.get('user') or '(anonymous)'}")
-    doc.add_paragraph(f"Model: {meta.get('chat_model')}")
-    doc.add_paragraph(f"Detail: {meta.get('detail_label')} ({meta.get('detail')})")
-    doc.add_paragraph(f"Max Tokens: {meta.get('max_tokens')}")
-    doc.add_paragraph(f"Top-K: {meta.get('top_k')}")
-    doc.add_paragraph(f"Generated At: {meta.get('ts_jst')}")
-  
-    # フィルタ（指定があるときだけ）
-    if filters:
-        years = filters.get("years") or []
-        pnos = filters.get("pnos") or []
-        files = filters.get("file_whitelist") or []
-        shards = filters.get("shards") or []
-
-        # いずれかに要素があればセクション追加
-        if any([years, pnos, files, shards]):
-            doc.add_paragraph("")
-            f_hdr = doc.add_paragraph("Filters")
-            f_hdr.runs[0].bold = True
-
-            if years:
-                doc.add_paragraph(f"year: {', '.join(map(str, years))}")
-            if pnos:
-                doc.add_paragraph(f"pno: {', '.join(pnos)}")
-            # if files:
-            #     doc.add_paragraph("files:")
-            #     for s in files[:200]:
-            #         doc.add_paragraph(f" - {s}")
-            #     if len(files) > 200:
-            #         doc.add_paragraph(f" ... and {len(files)-200} more")
-            if shards:
-                doc.add_paragraph(f"shards: {', '.join(shards)}")
-
-
-
-
-
-
-    # プロンプト
-    doc.add_paragraph("")
-    p_hdr = doc.add_paragraph("質問（ユーザープロンプト）")
-    p_hdr.runs[0].bold = True
-    for ln in (prompt_text or "").splitlines():
-        doc.add_paragraph(ln)
-
-    # 回答
-    doc.add_paragraph("")
-    a_hdr = doc.add_paragraph("回答")
-    a_hdr.runs[0].bold = True
-    for ln in (answer_text or "").splitlines():
-        doc.add_paragraph(ln)
-
-    bio = BytesIO()
-    doc.save(bio)
-    return bio.getvalue()
-
-
-
 # ===== Streamlit 基本設定／タイトル ==========================================
 st.set_page_config(page_title="Chat Bot (Sharded)", page_icon="💬", layout="wide")
-
-# ▼▼ ログイン表示付きタイトル（右上にバッジ） ▼▼
-col_title, col_user = st.columns([5, 2], vertical_alignment="center")
-with col_title:
-    st.title("💬 Internal Bot (RAG, Shards)")
-with col_user:
-    current_user, _payload = get_current_user_from_session_or_cookie(st)
-    if current_user:
-        st.success(f"ログイン中: **{current_user}**")
-    else:
-        st.warning("未ログイン（Cookie 未検出）")
+st.title("💬 Internal Bot (RAG, Shards)")
 
 if "q" not in st.session_state:
     st.session_state.q = ""
 
 def _set_q(x: str) -> None:
     st.session_state.q = x or ""
-
-
-# ▼ 使い方（ヘルプ）
-with st.expander("ℹ️ このページの使い方（サイドバー設定を含む）", expanded=False):
-    st.markdown("""
-### 1) 何ができる？
-- 社内PDFをシャーディングしたベクトルDBから **RAG 検索＋回答生成** を行います。
-- **year / pno フィルタ**や**参照ファイル限定**で対象を絞り込み可能。
-- 生成した **回答＋あなたの質問**を **Word（.docx）** で保存できます（フィルタ情報も出力）。
-
----
-
-### 2) サイドバーの主な設定
-- **モデル（Responses）**: 回答モデルを選択（例: `gpt-5-mini`）。
-- **検索件数（Top-K）**: コンテキスト取得の件数。（適宜調整してください．）
-- **詳しさ**: 出力の粒度（「簡潔/標準/詳細/超詳細」）。  
-  ※ ログには **日本語ラベル**と**英語コード**の両方（例: `詳細` / `detailed`）が保存されます。
-- **出典を [S1] で促す**: 回答に出典タグを含めるか。
-- **最大出力トークン**: 回答の長さ上限。（これは変更の必要はありません．）
-- **回答生成**:  （これは変更の必要はありません．）
-  - `OpenAI`…検索＋要約（通常）  
-  - `Retrieve-only`…**要約なし**でコンテキストのみ表示
-- **System Instruction**: モデルへの前提指示（任意）。（これは変更の必要はありません．）
-- **表示モード**: 逐次（ストリーム）or 一括。（これは変更の必要はありません．）
-- **検索対象シャード**: どのシャードを検索するか（未選択=すべて）。
-- **year / pno フィルタ**: 年やプロジェクト番号で対象を絞り込み。未入力なら全件。
-- **参照ファイル（任意）**: `2025/foo.pdf, 2024/bar.pdf` のように **特定ファイルだけ**に限定したいときに指定。（これは変更の必要はありません．）
-- **🧪 デモ用サンプル質問**:  
-  - 「⬇️ この質問を入力欄へセット」で入力欄にコピー  
-  - 「🚀 サンプルで即送信」で即実行  
-
-> 参考: 下段の **解決パス** はパスの確認用です（編集はできません）。
-
----
-
-### 3) 使い方の流れ
-1. サイドバーを設定する（必要に応じて year/pno/ファイル限定も指定）。
-2. 画面中央の「質問を入力」に聞きたい内容を入力。
-3. **送信** を押す。  
-   - 逐次表示を選んでいれば、回答がストリームで出ます。  
-   - 回答下部の「🔍 参照コンテキスト」で、使われた上位文脈を確認できます。
-4. 回答が出たら、**「⬇️ プロンプト＋回答を Word で保存」** ボタンで .docx を保存。  
-   - Word には **質問・回答・メタ情報（モデル/詳しさ/Top-K等）**に加え、  
-     指定した **year/pno/シャード/ファイル限定** のフィルタも記録されます。  
-
----
-
-### 4) 画面各部の見方
-- **🧠 回答**: 生成回答。出典タグ `[S1]` 等は後述の拡張で展開されます。
-- **📝 出典拡張済み最終テキスト**: `[Sx]` をソース表記に展開した一覧。
-- **🔍 参照コンテキスト**: 上位ヒットのスニペットとメタ（score, year, pno など）。
-- **📊 使用量の概算**: 埋め込み/チャットのトークン・概算コスト。
-- **🧠 メモリ状況（回答前/後）**: 実行前後のメモリの簡易メトリクス。
-
----
-
-### 5) トラブルシューティング
-- **「検索可能なシャードがありません」**: 先にベクトル化を実行してください（`vectors.npy` が必要）。
-- **該当コンテキストが見つからない**: Top-K を増やす / **クエリを具体化（具体的な質問を行なってください）** / シャードを絞る。
-    """)
-
 
 ####################
 # メモリ監視（任意）
@@ -264,11 +81,9 @@ with st.sidebar:
 
     top_k = st.slider("検索件数（Top-K）", 1, 12, 6, 1)
 
-    # ▼▼ 詳しさ：日本語ラベル保持＋英語コード変換 ▼▼
-    _detail_label = st.selectbox("詳しさ", ["簡潔", "標準", "詳細", "超詳細"], index=2)
-    _detail_map = {"簡潔": "concise", "標準": "standard", "詳細": "detailed", "超詳細": "very_detailed"}
-    detail = _detail_map[_detail_label]     # 既存 build_prompt 用
-    detail_label = _detail_label            # ログ用（日本語ラベル）
+    detail = {
+        "簡潔": "concise", "標準": "standard", "詳細": "detailed", "超詳細": "very_detailed"
+    }[st.selectbox("詳しさ", ["簡潔", "標準", "詳細", "超詳細"], index=2)]
 
     cite = st.checkbox("出典を [S1] で促す", True)
     max_tokens = st.slider("最大出力トークン", 1000, 40000, 12000, 500)
@@ -328,16 +143,16 @@ with st.sidebar:
                   on_click=lambda: _set_q(str(np.random.choice(ALL_SAMPLES)) if ALL_SAMPLES else ""))
     send_now = st.button("🚀 サンプルで即送信", width='stretch',
                          disabled=(st.session_state.q.strip() == ""))
-
-    # ▼▼ プリセット直送（🚀）を判定（ログ抑制に使用） ▼▼
-    is_preset_direct_send = bool(send_now)
-
+    
     #### メモリ状況（回答前 / 回答後）
     st.divider()
     st.subheader("🧠 メモリ状況（回答前 / 回答後）")
     # 回答前/後のスナップショット描画先（この順序で下に並ぶ）
     mem_pre_box = st.container()
     mem_post_box = st.container()
+
+    
+    
 
 
 # ===== 本文 =========================================================
@@ -354,31 +169,10 @@ if go and st.session_state.q.strip():
     timings = Timings()
     timings.mark("pipeline_start")
 
-    # ▼▼ 回答前スナップショット ▼▼
+    # ← ここが“回答前”。この時点のメモリを上段にレンダ
     with mem_pre_box:
         st.caption("（回答前スナップショット）")
         render_memory_kpi_row()
-
-    # ▼▼ ユーザー入力プロンプトのログ（🚀直送は除外） ▼▼
-    try:
-        if not is_preset_direct_send:
-            _prompt_text = st.session_state.q.strip()
-            logger.append({
-                "user": current_user or "(anonymous)",
-                "action": "ask",
-                "chat_model": chat_model,
-                "detail_label": detail_label,   # 例：「詳細」「超詳細」
-                "detail": detail,               # 例："detailed"
-                "cite": bool(cite),
-                "max_tokens": int(max_tokens),
-                "top_k": int(top_k),
-                "preset": False,                # プリセット直送ではない
-                "prompt_hash": sha256_short(_prompt_text),
-                **({"prompt": _prompt_text} if INCLUDE_FULL_PROMPT_IN_LOG else {}),
-            })
-        # else: プリセット直送は保存しない
-    except Exception as _log_e:
-        st.warning(f"ログ保存に失敗しました: {_log_e}")
 
     try:
         vs_backend_dir = PATHS.vs_root / "openai"
@@ -554,64 +348,6 @@ if go and st.session_state.q.strip():
             st.info("Retrieve-only モードです。下の参照コンテキストをご覧ください。")
             answer = ""  # 念のため
 
-        
-        # ===== ここから Word ダウンロード =====
-        try:
-            # 生成時刻（JST）
-            JST = dt.timezone(dt.timedelta(hours=9), name="Asia/Tokyo")
-            ts_jst = dt.datetime.now(JST).strftime("%Y-%m-%d %H:%M:%S %Z")
-
-            # ドキュメント用メタ
-            meta_doc = {
-                "user": current_user or "(anonymous)",
-                "chat_model": chat_model,
-                "detail_label": detail_label,
-                "detail": detail,
-                "max_tokens": int(max_tokens),
-                "top_k": int(top_k),
-                "ts_jst": ts_jst,
-            }
-
-            # ✅ フィルタ情報を定義
-            # filters_doc = {
-            #     "years": sorted(list(years_sel)) if years_sel else [],
-            #     "pnos": sorted(list(pnos_sel_norm)) if pnos_sel_norm else [],
-            #     "file_whitelist": sorted(list(effective_whitelist_norm)) if effective_whitelist_norm else [],
-            #     "shards": target_shards or [],
-            # }
-
-            # 明示指定のみ（UI + インライン）を記録したい場合
-            explicit_files = sorted(list({norm_path(x) for x in (ui_file_whitelist | inline_files)}))
-            filters_doc = {
-                "years": sorted(list(years_sel)) if years_sel else [],
-                "pnos": sorted(list(pnos_sel_norm)) if pnos_sel_norm else [],
-                "file_whitelist": explicit_files,  # ← こちらに置き換え
-                "shards": target_shards or [],
-}
-
-            prompt_text_for_doc = st.session_state.q.strip()
-            answer_text_for_doc = answer or ""
-
-            if Document is None:
-                st.info("📄 Word 保存を有効にするには `pip install python-docx` を実行してください。")
-            else:
-                # ✅ filters_doc を渡す！
-                docx_bytes = _build_docx(prompt_text_for_doc, answer_text_for_doc, meta_doc, filters_doc)
-                default_name = f"bot_answer_{dt.datetime.now(JST):%Y%m%d_%H%M%S}.docx"
-                st.download_button(
-                    "⬇️ プロンプト＋回答を Word で保存 (.docx)",
-                    data=docx_bytes,
-                    file_name=default_name,
-                    mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-                    use_container_width=True,
-                )
-        except Exception as _docx_e:
-            st.warning(f"Word 保存でエラー: {_docx_e}")
-        # ===== ここまで Word ダウンロード =====
-
-
-
-
         # ---- 参照コンテキスト ----
         with st.expander("🔍 参照コンテキスト（上位ヒット）", expanded=False):
             for i, (_rid, score, meta) in enumerate(raw_hits, 1):
@@ -639,7 +375,7 @@ if go and st.session_state.q.strip():
         timings.mark("pipeline_end")
         render_metrics_ui(timings)
 
-        # ⏱ 回答後スナップショット
+        # ⏱ パイプライン終了直前/直後に“回答後”のメモリを下段にレンダ
         with mem_post_box:
             st.caption("（回答後スナップショット）")
             render_memory_kpi_row()
@@ -652,10 +388,6 @@ if go and st.session_state.q.strip():
         render_metrics_ui(timings)
 else:
     st.info("質問を入力して『送信』を押してください。サイドバーで設定できます。")
-
-
-
-
 
 # 末尾：メモリ監視（任意で二重表示を避けるためコメントアウト例）
 # st.divider()

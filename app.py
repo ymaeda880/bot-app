@@ -2,18 +2,17 @@ import streamlit as st
 from lib.ui import hide_deploy_button
 from config.path_config import PATHS  # ← 追加
 
-st.set_page_config(page_title="社内ボット (No-FAISS版)", page_icon="🤖", layout="wide")
+st.set_page_config(page_title="社内ボット", page_icon="🤖", layout="wide")
 hide_deploy_button()
 
-st.title("🤖 社内ボット (no-FAISS版)")
+st.title("🤖 社内ボット")
 st.markdown("""
-左の **Pages** から  
-- **pdfベクトル化**：`pdf/` にある .pdf を分割→埋め込み→保存  
-- **ボット（改良版）**：保存した知識ベースに対して質問  
-を実行します。
+左の **Pages** から   
+- **ボット**：保存した知識ベースに対して質問をします．
 """)
 
-st.info("ボット（改良版）を使ってください。右側のサイドメニュー（ボット（改良版））をクリックしてください．")
+st.info("『ボット』を使ってください。右側のサイドメニュー（『ボット』）をクリックしてください．")
+st.error("このアプリは開発中です．『ボット』と『ポータルへ戻る』以外は使わないようにお願いします．")
 
 # === ここから追加 ===
 st.divider()
