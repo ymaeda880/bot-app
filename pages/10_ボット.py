@@ -112,7 +112,7 @@ st.set_page_config(page_title="Chat Bot (Sharded) — 簡略版", page_icon="�
 
 col_title, col_user = st.columns([5, 2], vertical_alignment="center")
 with col_title:
-    st.title("💬 Internal Bot（簡略版）")
+    st.title("💬 社内ボット")
 with col_user:
     current_user, _payload = get_current_user_from_session_or_cookie(st)
     if current_user:
