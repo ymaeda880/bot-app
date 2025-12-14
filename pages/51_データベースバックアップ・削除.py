@@ -190,7 +190,7 @@ st.caption(f"現在のバックアップ保存先: `{BACKUP_ROOT}`")
 
 col_a, col_b, col_c = st.columns(3)
 with col_a:
-    if st.button("⚡ 対象シャードを即時バックアップ", use_container_width=True, key="bak_one"):
+    if st.button("⚡ 対象シャードを即時バックアップ", width='stretch', key="bak_one"):
         copied, bdir = backup_all_local(base_dir, BACKUP_ROOT, backend, shard_id)
         if copied:
             st.success(f"[{backend}/{shard_id}] をバックアップ: {bdir}")
@@ -198,7 +198,7 @@ with col_a:
             st.info(f"[{backend}/{shard_id}] のコピー対象がありません（空シャードかもしれません）。 保存先: {bdir}")
 
 with col_b:
-    if st.button("⚡ すべてのシャードを即時バックアップ", use_container_width=True, key="bak_all"):
+    if st.button("⚡ すべてのシャードを即時バックアップ", width='stretch', key="bak_all"):
         summary = []
         # サイドバーで表示している和集合を利用
         for sid in (shard_ids_all if 'shard_ids_all' in locals() else []):
@@ -211,7 +211,7 @@ with col_b:
 
 with col_c:
     threshold = st.selectbox("未バックアップ日数 以上ならバックアップ", [1, 2, 3, 7, 14, 30], index=2, key="bak_thr")
-    if st.button("🗓 条件バックアップを実行", use_container_width=True, key="bak_cond"):
+    if st.button("🗓 条件バックアップを実行", width='stretch', key="bak_cond"):
         targets = (shard_ids_all if 'shard_ids_all' in locals() else [])
         triggered, skipped = [], []
         for sid in targets:
@@ -252,7 +252,7 @@ scope_label = st.radio(
 c1, c2 = st.columns(2)
 with c1:
     keep_last = st.number_input("保持する最新バックアップ数", min_value=1, max_value=50, value=3, step=1, key="keep_last_bak")
-    if st.button("🧹 最新N件を残して古いバックアップを削除", use_container_width=True, key="btn_cleanup_keep_last"):
+    if st.button("🧹 最新N件を残して古いバックアップを削除", width='stretch', key="btn_cleanup_keep_last"):
         targets = (shard_ids_all if "全シャード" in scope_label else [shard_id])
         all_deleted = []
         for sid in targets:
@@ -266,7 +266,7 @@ with c1:
 
 with c2:
     older_days = st.number_input("この日数より古いバックアップを削除", min_value=1, max_value=3650, value=90, step=1, key="older_days_bak")
-    if st.button("🧹 しきい値日数より古いバックアップを削除", use_container_width=True, key="btn_cleanup_older_than"):
+    if st.button("🧹 しきい値日数より古いバックアップを削除", width='stretch', key="btn_cleanup_older_than"):
         targets = (shard_ids_all if "全シャード" in scope_label else [shard_id])
         all_deleted = []
         for sid in targets:
@@ -292,7 +292,7 @@ else:
     if "file" not in df.columns:
         df["file"] = None
     st.caption(f"レコード数: {len(df):,}")
-    st.dataframe(df.head(500), use_container_width=True, height=420)
+    st.dataframe(df.head(500), width='stretch', height=420)
 
 st.divider()
 
@@ -304,7 +304,7 @@ bdirs_prev = list_backup_dirs_local(BACKUP_ROOT, backend, shard_id)
 if bdirs_prev:
     sel_bdir_prev = st.selectbox("バックアッププレビュー", bdirs_prev, format_func=lambda p: p.name, key="prev_bdir")
     if sel_bdir_prev:
-        st.dataframe(preview_backup_local(sel_bdir_prev), use_container_width=True, height=180)
+        st.dataframe(preview_backup_local(sel_bdir_prev), width='stretch', height=180)
 else:
     st.caption("まだバックアップがありません。")
 
@@ -330,7 +330,7 @@ if rows:
     if st.button(
         "🧹 削除実行",
         type="primary",
-        use_container_width=True,
+        width='stretch',
         disabled=not (target_files and confirm_del),
         key="btn_selective_delete",
     ):
@@ -449,7 +449,7 @@ with coly:
 if st.button(
     "🗂️ シャードごと削除を実行",
     type="secondary",
-    use_container_width=True,
+    width='stretch',
     disabled=not (confirm_shard_del and typed.strip().upper() == "DELETE"),
     key="sharddel_exec",
 ):
@@ -498,7 +498,7 @@ if rows:
     if st.button(
         "🧹 year/pno 指定削除を実行",
         type="primary",
-        use_container_width=True,
+        width='stretch',
         disabled=not confirm_yp,
         key="btn_del_yearpno"
     ):
@@ -623,7 +623,7 @@ with col_init_r:
 if st.button(
     "🗑️ 初期化実行",
     type="secondary",
-    use_container_width=True,
+    width='stretch',
     disabled=not (confirm_wipe and typed_init.strip().upper() == "DELETE"),
     key="wipe_execute",
 ):
@@ -663,7 +663,7 @@ st.info(
     "- 比較対象: meta.jsonl / vectors.npy / processed_files.json（存在・サイズ・MD5・件数/shape など）"
 )
 
-if st.button("🧮 最新バックアップとの差分を集計（全シャード）", type="secondary", use_container_width=True, key="btn_diff_all"):
+if st.button("🧮 最新バックアップとの差分を集計（全シャード）", type="secondary", width='stretch', key="btn_diff_all"):
     try:
         # 和集合で比較（バックアップ側にしかないシャードも含まれる）
         targets = (shard_ids_all if 'shard_ids_all' in locals() else [])
@@ -675,7 +675,7 @@ if st.button("🧮 最新バックアップとの差分を集計（全シャー�
             st.write(f"**差分あり:** {diff_items} / {len(df)} 項目")
             if missing_backup:
                 st.warning("最新バックアップが見つからないシャード: " + ", ".join(missing_backup))
-            st.dataframe(df, use_container_width=True, height=400)
+            st.dataframe(df, width='stretch', height=400)
     except Exception as e:
         st.error(f"差分集計中にエラー: {e}")
 
@@ -690,7 +690,7 @@ st.info(
     "- 片方にしか無いレコード（追加/欠落）を中心に表示します。"
 )
 
-if st.button("📑 対象シャードの差分 (pno, file) を抽出", type="secondary", use_container_width=True, key="btn_meta_diff_one"):
+if st.button("📑 対象シャードの差分 (pno, file) を抽出", type="secondary", width='stretch', key="btn_meta_diff_one"):
     try:
         only_live, only_bak, latest_bdir = meta_diff_for_shard(VS_ROOT, BACKUP_ROOT, backend, shard_id)
         if latest_bdir is None:
@@ -704,13 +704,13 @@ if st.button("📑 対象シャードの差分 (pno, file) を抽出", type="sec
             with colL:
                 st.markdown("**🟢 現行にのみ存在**")
                 if only_live:
-                    st.dataframe(pd.DataFrame(only_live, columns=["pno", "file"]), use_container_width=True, height=240)
+                    st.dataframe(pd.DataFrame(only_live, columns=["pno", "file"]), width='stretch', height=240)
                 else:
                     st.caption("差分なし")
             with colR:
                 st.markdown("**🟠 バックアップにのみ存在**")
                 if only_bak:
-                    st.dataframe(pd.DataFrame(only_bak, columns=["pno", "file"]), use_container_width=True, height=240)
+                    st.dataframe(pd.DataFrame(only_bak, columns=["pno", "file"]), width='stretch', height=240)
                 else:
                     st.caption("差分なし")
 
@@ -728,7 +728,7 @@ st.info(
     "- ※ 現行にのみ存在（only_live）は警告のみで同期対象外です（片方向同期で安全に）。"
 )
 
-if st.button("📥 差分を読み込む（バックアップ最新 vs 現行）", type="secondary", use_container_width=True, key="btn_load_diffs_select"):
+if st.button("📥 差分を読み込む（バックアップ最新 vs 現行）", type="secondary", width='stretch', key="btn_load_diffs_select"):
     try:
         only_bak_pairs, latest_bdir, only_live_cnt = load_only_bak_pairs_for_shard(VS_ROOT, BACKUP_ROOT, backend, shard_id)
         st.session_state["diff_pairs_only_bak"] = only_bak_pairs
@@ -749,7 +749,7 @@ if diff_pairs is not None and latest_bdir_str is not None:
         df_view.insert(0, "sync", True)
         edited = st.data_editor(
             df_view,
-            use_container_width=True,
+            width='stretch',
             height=360,
             column_config={
                 "sync": st.column_config.CheckboxColumn("同期", default=True),
@@ -762,7 +762,7 @@ if diff_pairs is not None and latest_bdir_str is not None:
 
         colL, colR = st.columns(2)
         with colL:
-            if st.button("🟢 選択分のみ同期", type="primary", use_container_width=True, key="btn_sync_selected"):
+            if st.button("🟢 選択分のみ同期", type="primary", width='stretch', key="btn_sync_selected"):
                 try:
                     sel_pairs = [
                         (str(row["pno"]) if row["pno"] is not None else None, normalize_path(row["file"]))
@@ -778,7 +778,7 @@ if diff_pairs is not None and latest_bdir_str is not None:
                     st.error(f"同期中にエラー: {e}")
 
         with colR:
-            if st.button("🟣 全ての差分を同期", type="secondary", use_container_width=True, key="btn_sync_all"):
+            if st.button("🟣 全ての差分を同期", type="secondary", width='stretch', key="btn_sync_all"):
                 try:
                     res = sync_pairs_from_backup_to_live(VS_ROOT, BACKUP_ROOT, backend, shard_id, diff_pairs)
                     st.success(
@@ -810,9 +810,9 @@ if not bdirs_restore:
 else:
     sel_bdir_restore = st.selectbox("復元するバックアップを選択", bdirs_restore, format_func=lambda p: p.name, key="restore_bdir")
     if sel_bdir_restore:
-        st.dataframe(preview_backup_local(sel_bdir_restore), use_container_width=True, height=160)
+        st.dataframe(preview_backup_local(sel_bdir_restore), width='stretch', height=160)
         ok_restore = st.checkbox("復元に同意します（現在のファイルは上書きされます）", key="restore_ok")
-        if st.button("♻️ 復元実行", type="primary", use_container_width=True, disabled=not ok_restore, key="restore_exec"):
+        if st.button("♻️ 復元実行", type="primary", width='stretch', disabled=not ok_restore, key="restore_exec"):
             try:
                 restored, missing = restore_from_backup_local(base_dir, sel_bdir_restore)
                 msg = "復元完了 ✅\n" + "\n".join(f"- {x}" for x in restored)

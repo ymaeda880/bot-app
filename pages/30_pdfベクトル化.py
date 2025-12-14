@@ -232,13 +232,23 @@ for pno in sorted(status_map.keys()):
                     return s if len(s) <= n else s[:n-1] + "…"
                 st.code("\n".join(_ellipsis(x) for x in unproc), language="text")
 
+# --- 初期化（最初の1回だけ） ---
+if "selected_pnos" not in st.session_state:
+    st.session_state["selected_pnos"] = []
+
+# シャード変更でリセット
+if previous_shard != selected_shard:
+    st.session_state["selected_pnos"] = []
+    st.session_state["previous_shard"] = selected_shard
+
+# チェックボックス側の選択を session_state に反映
 if checked_pnos:
     st.session_state["selected_pnos"] = checked_pnos
 
+# 🔧 ここでは default を使わず、key だけ指定する
 selected_pnos = st.multiselect(
     "対象プロジェクト番号（pno）を選択（複数可）",
     pnos,
-    default=st.session_state.get("selected_pnos", []),  # ← 修正：pnos[:1] を削除して []
     key="selected_pnos",
 )
 

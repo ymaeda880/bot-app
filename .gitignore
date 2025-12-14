@@ -8,24 +8,45 @@ __pycache__/
 *.pyd
 *.DS_Store
 
+
+
 # Streamlit
 .streamlit/secrets.toml
 .streamlit/*.log
 
-# ログファイル
-logs/
-*.log
+# プロジェクト直下の logs/ を無視
+/logs/
 nohup.out
+**/bot.log
+bot.log
+log_bot.txt
 
+# lib/logs 内のログも無視
+lib/logs/*.log
+lib/logs/*.jsonl
+lib/logs/*.sqlite3
+lib/logs/*.sqlite3-shm
+lib/logs/*.sqlite3-wal
+
+# lib/logs/ 内の Python ファイルは無視しない
+!lib/logs/*.py
+
+
+# ===============================
 # キャッシュ / ノートブック
+# ===============================
 .ipynb_checkpoints/
 .cache/
 
-# 大きなデータ（例）
+# ===============================
+# 大きなデータ
+# ===============================
 data/*.zip
 data/raw/*
 
-# データベース
+/develop/
+
+# ===============================
+# データベース（全て無視）
+# ===============================
 database/
-
-
