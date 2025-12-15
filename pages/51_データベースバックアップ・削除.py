@@ -185,7 +185,7 @@ base_dir.mkdir(parents=True, exist_ok=True)
 # 🛡️ バックアップ（拡張）
 # （バックアップ保存先はサイドバーで選択済み）
 # ============================================================
-st.subheader("🛡️ バックアップ（拡張）")
+st.subheader("🛡️ バックアップ（拡張）（バックアップの実行）")
 st.caption(f"現在のバックアップ保存先: `{BACKUP_ROOT}`")
 
 col_a, col_b, col_c = st.columns(3)
@@ -283,7 +283,7 @@ st.divider()
 # ============================================================
 # 📄 現状プレビュー（現行）
 # ============================================================
-st.subheader("📄 現状プレビュー（現行）")
+st.subheader("📄 現状プレビュー（現行）（先頭500行表示）")
 rows = [dict(obj) for obj in iter_jsonl(meta_path)] if meta_path.exists() else []
 if not rows:
     st.caption("このシャードには meta.jsonl が存在しないか、レコードがありません。")
@@ -297,9 +297,9 @@ else:
 st.divider()
 
 # ============================================================
-# 📦 バックアップ（個別プレビュー）
+# 📦 バックアップ（個別プレビュー）（バックアップ状況の確認）
 # ============================================================
-st.subheader("📦 バックアップ（個別プレビュー）")
+st.subheader("📦 バックアップ（個別プレビュー）（バックアップ状況の確認）")
 bdirs_prev = list_backup_dirs_local(BACKUP_ROOT, backend, shard_id)
 if bdirs_prev:
     sel_bdir_prev = st.selectbox("バックアッププレビュー", bdirs_prev, format_func=lambda p: p.name, key="prev_bdir")
