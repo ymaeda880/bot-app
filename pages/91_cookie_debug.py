@@ -98,7 +98,7 @@ if not cookies:
 else:
     def _short(v: str, n=60): return v if len(v) <= n else v[:28] + " … " + v[-28:]
     rows = [{"name": k, "length": len(str(v)), "value_preview": _short(str(v))} for k, v in cookies.items()]
-    st.dataframe(rows, use_container_width=True)
+    st.dataframe(rows, width='stretch')
 
 st.subheader("2) SSO クッキー（JWT）検査")
 token = cookies.get(COOKIE_NAME)

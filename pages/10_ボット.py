@@ -57,7 +57,11 @@ for p in (MONO_ROOT, PROJ_DIR, APP_DIR):
 # --- ロガー ---
 _APP_DIR = Path(__file__).resolve().parents[1]
 _PAGE_NAME = Path(__file__).stem
-logger = JsonlLogger(app_dir=_APP_DIR, page_name=_PAGE_NAME)
+logger = JsonlLogger(
+    projects_root=MONO_ROOT,      # .../projects
+    app_name=APP_DIR.name,        # bot_app
+    page_name=_PAGE_NAME,
+)
 INCLUDE_FULL_PROMPT_IN_LOG = True
 
 VS_ROOT: Path = PATHS.vs_root

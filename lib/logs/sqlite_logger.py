@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Optional
+from typing import Optional
 import sqlite3
 from datetime import datetime, timezone, timedelta
 
@@ -12,8 +12,8 @@ DB_FILE_NAME = "bot_logs.sqlite3"
 
 def get_db_path(app_dir: Path) -> Path:
     """
-    bot_app ディレクトリなどを受け取り、
-    その配下の logs/bot_logs.sqlite3 の Path を返すだけの小ヘルパー。
+    app_dir（例：.../Storages/<sub>/bot_app）を受け取り、
+    その配下の logs/bot_logs.sqlite3 を返す。
     """
     return app_dir / "logs" / DB_FILE_NAME
 
@@ -21,11 +21,17 @@ def get_db_path(app_dir: Path) -> Path:
 def init_bot_logs_db(app_dir: Path) -> Path:
     """
     bot_logs.sqlite3 を初期化（なければ作成）して Path を返す。
-    - WAL モード ＋ synchronous=NORMAL を設定
-    - logs テーブルを CREATE TABLE IF NOT EXISTS で作成
+
+    重要（方針）:
+      - この関数はディレクトリ作成（mkdir）をしない。
+      - 呼び出し側（ページ側）が事前に logs/ を作成しておくこと。
     """
     db_path = get_db_path(app_dir)
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if not db_path.parent.exists():
+        raise FileNotFoundError(
+            f"logs ディレクトリが存在しません：{db_path.parent}（ページ側で mkdir してください）"
+        )
 
     conn = sqlite3.connect(db_path)
     cur = conn.cursor()
@@ -40,8 +46,8 @@ def init_bot_logs_db(app_dir: Path) -> Path:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ts TEXT NOT NULL,         -- JST ISO8601
             app TEXT NOT NULL,        -- 例: "bot_app"
-            page TEXT NOT NULL,       -- 例: "12_ボット"
-            user TEXT NOT NULL,       -- ログインユーザー or (anonymous)
+            page TEXT NOT NULL,       -- 例: "13_ボット（ログ管理拡張版）__openai"
+            user TEXT NOT NULL,       -- ログインユーザー
             action TEXT NOT NULL,     -- "ask" / "answer" など
             model TEXT,               -- 例: "gpt-5-mini"
             detail TEXT,              -- concise / standard / detailed...

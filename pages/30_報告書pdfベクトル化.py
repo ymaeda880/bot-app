@@ -53,6 +53,16 @@ from typing import List, Tuple
 import json
 import time
 
+# --- sys.path 調整（common_lib へ到達） ---
+#（pageから）
+import sys
+_THIS = Path(__file__).resolve()
+APP_ROOT = _THIS.parents[1]          # pages -> app root
+PROJECTS_ROOT = _THIS.parents[3]     # auth_portal/pages -> projects/auth_portal
+import sys
+if str(PROJECTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECTS_ROOT))
+
 import streamlit as st
 
 from config.path_config import PATHS
@@ -67,6 +77,8 @@ from lib.pdf_ingest import (
     migrate_processed_files_to_canonical, ingest_pdf_file,
     get_vector_count,
 )
+
+from common_lib.auth.auth_helpers import require_admin_user
 
 # ============================================================
 # ユーティリティ（_skip / _side.json(ocr in {skipped,failed,locked}) 除外）
@@ -129,6 +141,7 @@ def _fmt_eta(sec: float) -> str:
         return f"{m:d}分{s:02d}秒"
     return f"{s:d}秒"
 
+
 # ============================================================
 # ページ基本設定（タイトルやレイアウト）
 # ============================================================
@@ -137,7 +150,29 @@ st.set_page_config(
     page_icon="🧱",
     layout="wide",
 )
-st.title("🧱 年度（=シャード）→ プロジェクト番号（=フォルダ）ごとのベクトル化")
+
+# ============================================================
+# アクセス制御（管理者チェック）：require_admin_user に統一
+# ============================================================
+sub = require_admin_user(st)
+if not sub:
+    st.error("🚫 このページは管理者のみアクセスできます。")
+    st.stop()
+
+user=sub
+
+# ============================================================
+# タイトル＋ログインバッジ（65_ログ管理.py と同スタイル）
+# ============================================================
+col_title, col_user = st.columns([5, 2], vertical_alignment="center")
+
+with col_title:
+    st.title("🧱 報告書のベクトル化")
+    st.write("年度（=シャード）→ プロジェクト番号（=フォルダ）ごとのベクトル化")
+
+with col_user:
+    st.success(f"管理者としてログイン中: **{user}**")
+
 
 st.markdown("""
 **処理の流れ:**

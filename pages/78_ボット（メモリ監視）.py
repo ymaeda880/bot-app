@@ -1,4 +1,4 @@
-# pages/28_ボット（開発用）.py
+# pages/78_ボット（開発用）.py
 # =============================================================================
 # 💬 Internal Bot (RAG, Shards) — year/pno フィルタ付き（候補プリフィルタ＋TopKブースト）
 # + ⏱ 実行タイミング計測（VectorDB 走査 / 埋め込み / 検索 / GPT API / ストリーム）
@@ -73,10 +73,22 @@ for p in (MONO_ROOT, PROJ_DIR, APP_DIR):
 from common_lib.auth.auth_helpers import get_current_user_from_session_or_cookie
 from common_lib.logs.jsonl_logger import JsonlLogger, sha256_short
 
+from common_lib.auth.auth_helpers import require_admin_user
+
 # アプリ／ページ情報とロガー初期化
 _APP_DIR = Path(__file__).resolve().parents[1]
 _PAGE_NAME = Path(__file__).stem
-logger = JsonlLogger(app_dir=_APP_DIR, page_name=_PAGE_NAME)
+
+# JsonlLogger は projects_root と app_name が必須
+_PROJECTS_ROOT = Path(__file__).resolve().parents[3]   # .../projects
+_APP_NAME = _APP_DIR.name                              # 例: "bot_app"
+
+logger = JsonlLogger(
+    projects_root=_PROJECTS_ROOT,
+    app_name=_APP_NAME,
+    page_name=_PAGE_NAME,
+    rotate="monthly",   # 月次ローテするなら。不要なら消してOK（デフォルト none）
+)
 
 # ユーザープロンプト本文をログ保存するか
 INCLUDE_FULL_PROMPT_IN_LOG = True
@@ -163,12 +175,20 @@ def _build_docx(prompt_text: str, answer_text: str, meta: Dict[str, Any], filter
 # ===== Streamlit 基本設定／タイトル ==========================================
 st.set_page_config(page_title="Chat Bot (Sharded)", page_icon="💬", layout="wide")
 
+sub = require_admin_user(st)
+if not sub:
+    st.error("🚫 このページは管理者のみアクセスできます。")
+    st.stop()
+
+st.success(f"✅ 管理者ログイン中: **{sub}**")  # ← 表示はここで自由に
+current_user=sub
+
 # ▼▼ ログイン表示付きタイトル（右上にバッジ） ▼▼
 col_title, col_user = st.columns([5, 2], vertical_alignment="center")
 with col_title:
     st.title("💬 Internal Bot (RAG, Shards)")
 with col_user:
-    current_user, _payload = get_current_user_from_session_or_cookie(st)
+    #current_user, _payload = get_current_user_from_session_or_cookie(st)
     if current_user:
         st.success(f"ログイン中: **{current_user}**")
     else:

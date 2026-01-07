@@ -1,3 +1,5 @@
+#bot_app/app.py
+#
 import streamlit as st
 from lib.ui import hide_deploy_button
 from config.path_config import PATHS  # ← 追加

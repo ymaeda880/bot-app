@@ -22,7 +22,6 @@ from lib.costs_new import (
     ChatUsage,
 )
 from lib.bot_utils import (
-    list_shard_dirs_openai,
     fmt_source,
     enrich_citations,
     year_ok,
@@ -67,29 +66,38 @@ def run_bot_query(
     years_sel: Set[int],
     pnos_sel_norm: Set[str],
     system_instruction: str,
+    vectorspace: str = "openai",   # ★追加: "openai" or "openai_sample"
 ) -> BotAnswerView:
     """
     1 回の質問処理を完結させる実行パイプライン。
 
     pages 側はこの関数だけを呼ぶ。
     検索・生成・usage・コスト計算の詳細はすべてここに封印する。
+
+    vectorspace:
+      - "openai"        -> {VS_ROOT}/openai/<shard>/
+      - "openai_sample" -> {VS_ROOT}/openai_sample/<shard>/
     """
 
     use_gemini = chat_model.startswith("gemini-")
 
     # --------------------------------------------------------
-    # 1. shard 列挙
+    # 1. shard 列挙（vectorspace 切替）
     # --------------------------------------------------------
-    vs_backend_dir = PATHS.vs_root / "openai"
-    shard_ids = [p.name for p in list_shard_dirs_openai(PATHS.vs_root)]
-    shard_dirs = [
-        vs_backend_dir / sid
-        for sid in shard_ids
-        if (vs_backend_dir / sid / "vectors.npy").exists()
-    ]
+    vs_backend_dir = PATHS.vs_root / vectorspace
+    if not vs_backend_dir.exists():
+        raise RuntimeError(f"検索DBが存在しません: {vs_backend_dir}")
+
+    # vectors.npy がある shard のみ対象
+    shard_dirs: List[Any] = []
+    for p in sorted(vs_backend_dir.iterdir()):
+        if not p.is_dir():
+            continue
+        if (p / "vectors.npy").exists():
+            shard_dirs.append(p)
 
     if not shard_dirs:
-        raise RuntimeError("検索可能なシャードが存在しません")
+        raise RuntimeError(f"検索可能なシャードが存在しません（{vectorspace}）")
 
     # --------------------------------------------------------
     # 2. 候補ファイル事前チェック（year / pno）
@@ -127,6 +135,7 @@ def run_bot_query(
 
             md = dict(meta or {})
             md["shard_id"] = shp.name
+            md["vectorspace"] = vectorspace  # ★任意: どのDBから来たか残す
 
             if not year_ok(md, years_sel):
                 continue
