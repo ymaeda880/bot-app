@@ -4,14 +4,64 @@ import streamlit as st
 from lib.ui import hide_deploy_button
 from config.path_config import PATHS  # ← 追加
 
-st.set_page_config(page_title="社内ボット", page_icon="🤖", layout="wide")
-hide_deploy_button()
+# ============================================================
+# パスの取得とcommon_lib読み込み（app.pyにおけるコード）
+# ============================================================
+from pathlib import Path
+import sys
 
-st.title("🤖 社内ボット")
-st.markdown("""
-左の **Pages** から   
-- **ボット**：保存した知識ベースに対して質問をします．
-""")
+_THIS = Path(__file__).resolve()
+APP_ROOT = _THIS.parent
+APP_NAME = APP_ROOT.name                  # ← app_name を自動取得
+PROJECTS_ROOT = _THIS.parents[2]
+
+if str(PROJECTS_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECTS_ROOT))
+
+from common_lib.sessions import SessionConfig, init_session, heartbeat_tick
+from common_lib.auth.auth_helpers import require_login
+
+
+# ============================================================
+# set_page_config
+# ============================================================
+st.set_page_config(page_title="社内ボット", page_icon="🤖", layout="wide")
+
+
+# ============================================================
+# Session heartbeat（全ページ共通・app.py）
+# ============================================================
+SESSIONS_DB = (
+    PROJECTS_ROOT / "Storages" / "_admin" / "sessions" / "sessions.db"
+)
+CFG = SessionConfig()  # heartbeat=30s, TTL=120s（既定）
+
+# ───────────────── ログイン必須 ─────────────────
+
+sub = require_login(st)
+if not sub:
+    st.stop()
+
+# ───────────────── ヘッダ ─────────────────
+left, right = st.columns([2, 1])
+with left:
+    st.title("🤖 社内ボット")
+with right:
+    st.success(f"✅ ログイン中: **{sub}**")
+
+user = sub
+
+# ───────────────── sessions（初期化 + heartbeat） ─────────────────
+init_session(db_path=SESSIONS_DB, cfg=CFG, user_sub=user, app_name=APP_NAME)
+heartbeat_tick(db_path=SESSIONS_DB, cfg=CFG, user_sub=user, app_name=APP_NAME)
+
+#hide_deploy_button()
+
+# st.title("🤖 社内ボット")
+# st.markdown("""
+# 左の **Pages** から   
+# - **ボット**：保存した知識ベースに対して質問をします．
+# """)
 
 st.info("『ボット』を使ってください。右側のサイドメニュー（『ボット』）をクリックしてください．")
 st.error("このアプリは開発中です．『ボット』と『ポータルへ戻る』以外は使わないようにお願いします．")
