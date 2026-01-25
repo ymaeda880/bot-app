@@ -20,20 +20,29 @@ if str(PROJECTS_ROOT) not in sys.path:
 
 from common_lib.sessions import SessionConfig, init_session, heartbeat_tick
 from common_lib.auth.auth_helpers import require_login
+from common_lib.ui.banner_lines import render_banner_line_by_key
 
 
 # ============================================================
 # set_page_config
 # ============================================================
-st.set_page_config(page_title="社内ボット", page_icon="🤖", layout="wide")
-
+st.set_page_config(page_title="Bot / 社内ボット", page_icon="🤖", layout="wide")
+render_banner_line_by_key("cyan_clean")
 
 # ============================================================
 # Session heartbeat（全ページ共通・app.py）
 # ============================================================
+from common_lib.storage.storages_config import resolve_storages_root
+
+STORAGES_ROOT = resolve_storages_root(PROJECTS_ROOT)
+
 SESSIONS_DB = (
-    PROJECTS_ROOT / "Storages" / "_admin" / "sessions" / "sessions.db"
+    STORAGES_ROOT
+    / "_admin"
+    / "sessions"
+    / "sessions.db"
 )
+
 CFG = SessionConfig()  # heartbeat=30s, TTL=120s（既定）
 
 # ───────────────── ログイン必須 ─────────────────
@@ -57,14 +66,14 @@ heartbeat_tick(db_path=SESSIONS_DB, cfg=CFG, user_sub=user, app_name=APP_NAME)
 
 #hide_deploy_button()
 
-# st.title("🤖 社内ボット")
+# st.title("🤖 Bot / 社内ボット")
 # st.markdown("""
 # 左の **Pages** から   
 # - **ボット**：保存した知識ベースに対して質問をします．
 # """)
 
 st.info("『ボット』を使ってください。右側のサイドメニュー（『ボット』）をクリックしてください．")
-st.error("このアプリは開発中です．『ボット』と『ポータルへ戻る』以外は使わないようにお願いします．")
+st.caption("このアプリは開発中です．『ボット』と『ポータルへ戻る』以外は使わないようにお願いします．")
 
 # === ここから追加 ===
 st.divider()
@@ -72,7 +81,7 @@ st.divider()
 st.markdown("""
 ## 📝 社内ボットアプリケーションについて（開発中のお知らせ）
 
-本アプリケーションが参照する報告書データについては，**2019年分（データベース上に報告書が存在するもの）と、2020年の一部** が現在データベース化されています。
+本アプリケーションが参照する報告書データについては，**2019年分から2020年まで（データベース上に報告書が存在するもの）と、2021年の一部** が現在データベース化されています。
 今後は、データベースを **順次拡充** していく予定です。（pdfファイルが400以上存在するプロジェクトは現在は除外しています．）
 
 本アプリケーションは現在も開発を進めており、 使い勝手の面でご不便をおかけする部分があるかもしれませんが、 

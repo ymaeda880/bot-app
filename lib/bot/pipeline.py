@@ -6,12 +6,15 @@ from typing import Any, Dict, List, Tuple, Set
 
 import heapq
 from itertools import count
+import re
+
 
 from config.path_config import PATHS
 from config.config import DEFAULT_USDJPY, estimate_tokens_from_text
 
 from lib.text_normalize import normalize_ja_text
-from lib.prompts.bot_prompt import build_prompt
+from lib.prompts.bot_prompt import build_prompt, build_system_instruction
+
 from lib.gpt_responder import GPTResponder
 from lib.gemini_responder import GeminiResponder
 from lib.rag.rag_utils import EmbeddingStore, NumpyVectorDB
@@ -28,6 +31,8 @@ from lib.bot_utils import (
     pno_ok,
     scan_candidate_files,
 )
+
+from common_lib.text.alpha_abbrev import normalize_alpha_abbrev
 
 
 # ============================================================
@@ -51,6 +56,13 @@ class BotAnswerView:
     chat_model: str
     used_gemini: bool
 
+    # debug（実際にAPIへ渡したプロンプト）
+    debug_system: str
+    debug_user: str
+
+
+
+
 
 # ============================================================
 # 実行パイプライン（封印対象）
@@ -67,6 +79,7 @@ def run_bot_query(
     pnos_sel_norm: Set[str],
     system_instruction: str,
     vectorspace: str = "openai",   # ★追加: "openai" or "openai_sample"
+    strict: bool = True,          # ★追加: strict / non-strict 切替（デフォルト strict）
 ) -> BotAnswerView:
     """
     1 回の質問処理を完結させる実行パイプライン。
@@ -109,10 +122,17 @@ def run_bot_query(
     # --------------------------------------------------------
     # 3. Embedding
     # --------------------------------------------------------
-    norm_q = normalize_ja_text(question)
+    # (A) アルファベット略語の正規化（LLMに解釈させない）
+    question_norm, alpha_report = normalize_alpha_abbrev(question)
+
+    # (B) 既存の日本語正規化（正本）
+    norm_q = normalize_ja_text(question_norm)
+
     estore = EmbeddingStore(backend="openai")
 
-    embedding_tokens = count_tokens(question, "text-embedding-3-large")
+    # embedding のトークン数は「実際に埋め込む質問」に合わせる
+    embedding_tokens = count_tokens(question_norm, "text-embedding-3-large")
+
     qv = estore.embed([norm_q]).astype("float32")
 
     # --------------------------------------------------------
@@ -168,20 +188,23 @@ def run_bot_query(
     prompt = build_prompt(
         norm_q,
         labeled,
-        sys_inst=system_instruction,
         style_hint=detail,
         cite=True,
-        strict=False,
     )
+
 
     # --------------------------------------------------------
     # 6. LLM 呼び出し
     # --------------------------------------------------------
+    system_text = build_system_instruction(
+        sys_inst=system_instruction,
+        strict=bool(strict),
+    )
     if use_gemini:
         responder = GeminiResponder()
         result = responder.complete(
             model=chat_model,
-            system_instruction=system_instruction,
+            system_instruction=system_text,
             user_content=prompt,
             max_output_tokens=max_tokens,
         )
@@ -193,7 +216,7 @@ def run_bot_query(
         responder = GPTResponder()
         result = responder.complete(
             model=chat_model,
-            system_instruction=system_instruction,
+            system_instruction=system_text,
             user_content=prompt,
             max_output_tokens=max_tokens,
         )
@@ -240,4 +263,6 @@ def run_bot_query(
         cost_jpy=total_jpy,
         chat_model=chat_model,
         used_gemini=use_gemini,
+        debug_system=system_text,
+        debug_user=prompt,
     )
