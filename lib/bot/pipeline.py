@@ -1,4 +1,35 @@
 # lib/bot/pipeline.py
+
+# ============================================================
+# bot pipeline（RAG 実行パイプライン）
+#
+# 【重要な経緯メモ】
+# 以前の bot（202X年頃）の回答品質が高く、現行実装では
+# 回答が硬く・薄く・「資料から分かりません」に寄りやすくなった。
+#
+# 調査の結果、主な差分は以下の3点だった：
+#
+# 1. 検索クエリの差分
+#    - 新実装では normalize_alpha_abbrev() 等の追加正規化を行っていた
+#    - 過去実装では normalize_ja_text(question) のみ
+#    → 埋め込みベクトルが変わり、RAG の Top-K ヒットが変化していた
+#
+# 2. strict モードの強化/配線
+#    - strict が効きすぎると「分かりません」に寄りやすい一方、
+#      strict=False だと説明が自然になりやすい。
+#    - ただし UI に「厳格/補足あり」がある以上、ページ側の選択を
+#      pipeline で確実に受け取り、build_prompt(strict=...) に反映する。
+#
+# 3. system / user プロンプト構造の変更
+#    - 過去は prompt 本文に "# System {sys_inst}" を含め、
+#      API の system_instruction にも同じ内容を渡していた
+#
+# 目的：
+# - UI の strict 切替を正しく反映（厳格/補足あり）
+# - デバッグ表示用に「実際に API に渡した System / User」を保持する
+# ============================================================
+
+
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -6,15 +37,12 @@ from typing import Any, Dict, List, Tuple, Set
 
 import heapq
 from itertools import count
-import re
-
 
 from config.path_config import PATHS
 from config.config import DEFAULT_USDJPY, estimate_tokens_from_text
 
 from lib.text_normalize import normalize_ja_text
-from lib.prompts.bot_prompt import build_prompt, build_system_instruction
-
+from lib.prompts.bot_prompt import build_prompt
 from lib.gpt_responder import GPTResponder
 from lib.gemini_responder import GeminiResponder
 from lib.rag.rag_utils import EmbeddingStore, NumpyVectorDB
@@ -31,8 +59,6 @@ from lib.bot_utils import (
     pno_ok,
     scan_candidate_files,
 )
-
-from common_lib.text.alpha_abbrev import normalize_alpha_abbrev
 
 
 # ============================================================
@@ -61,9 +87,6 @@ class BotAnswerView:
     debug_user: str
 
 
-
-
-
 # ============================================================
 # 実行パイプライン（封印対象）
 # ============================================================
@@ -78,18 +101,14 @@ def run_bot_query(
     years_sel: Set[int],
     pnos_sel_norm: Set[str],
     system_instruction: str,
-    vectorspace: str = "openai",   # ★追加: "openai" or "openai_sample"
-    strict: bool = True,          # ★追加: strict / non-strict 切替（デフォルト strict）
+    vectorspace: str = "openai",   # "openai" or "openai_sample"
+    strict: bool = True,           # ★復活：UI の厳格/補足あり を反映する
 ) -> BotAnswerView:
     """
     1 回の質問処理を完結させる実行パイプライン。
 
     pages 側はこの関数だけを呼ぶ。
     検索・生成・usage・コスト計算の詳細はすべてここに封印する。
-
-    vectorspace:
-      - "openai"        -> {VS_ROOT}/openai/<shard>/
-      - "openai_sample" -> {VS_ROOT}/openai_sample/<shard>/
     """
 
     use_gemini = chat_model.startswith("gemini-")
@@ -101,7 +120,6 @@ def run_bot_query(
     if not vs_backend_dir.exists():
         raise RuntimeError(f"検索DBが存在しません: {vs_backend_dir}")
 
-    # vectors.npy がある shard のみ対象
     shard_dirs: List[Any] = []
     for p in sorted(vs_backend_dir.iterdir()):
         if not p.is_dir():
@@ -122,17 +140,10 @@ def run_bot_query(
     # --------------------------------------------------------
     # 3. Embedding
     # --------------------------------------------------------
-    # (A) アルファベット略語の正規化（LLMに解釈させない）
-    question_norm, alpha_report = normalize_alpha_abbrev(question)
-
-    # (B) 既存の日本語正規化（正本）
-    norm_q = normalize_ja_text(question_norm)
-
+    norm_q = normalize_ja_text(question)
     estore = EmbeddingStore(backend="openai")
 
-    # embedding のトークン数は「実際に埋め込む質問」に合わせる
-    embedding_tokens = count_tokens(question_norm, "text-embedding-3-large")
-
+    embedding_tokens = count_tokens(question, "text-embedding-3-large")
     qv = estore.embed([norm_q]).astype("float32")
 
     # --------------------------------------------------------
@@ -155,7 +166,7 @@ def run_bot_query(
 
             md = dict(meta or {})
             md["shard_id"] = shp.name
-            md["vectorspace"] = vectorspace  # ★任意: どのDBから来たか残す
+            md["vectorspace"] = vectorspace
 
             if not year_ok(md, years_sel):
                 continue
@@ -185,26 +196,24 @@ def run_bot_query(
         for i, (_rid, s, m) in enumerate(raw_hits, 1)
     ]
 
+    # ★ここが本丸：UI の strict を build_prompt に反映
     prompt = build_prompt(
         norm_q,
         labeled,
+        sys_inst=system_instruction,
         style_hint=detail,
         cite=True,
+        strict=bool(strict),
     )
-
 
     # --------------------------------------------------------
     # 6. LLM 呼び出し
     # --------------------------------------------------------
-    system_text = build_system_instruction(
-        sys_inst=system_instruction,
-        strict=bool(strict),
-    )
     if use_gemini:
         responder = GeminiResponder()
         result = responder.complete(
             model=chat_model,
-            system_instruction=system_text,
+            system_instruction=system_instruction,
             user_content=prompt,
             max_output_tokens=max_tokens,
         )
@@ -216,7 +225,7 @@ def run_bot_query(
         responder = GPTResponder()
         result = responder.complete(
             model=chat_model,
-            system_instruction=system_text,
+            system_instruction=system_instruction,
             user_content=prompt,
             max_output_tokens=max_tokens,
         )
@@ -263,6 +272,6 @@ def run_bot_query(
         cost_jpy=total_jpy,
         chat_model=chat_model,
         used_gemini=use_gemini,
-        debug_system=system_text,
-        debug_user=prompt,
+        debug_system=str(system_instruction or ""),
+        debug_user=str(prompt or ""),
     )
